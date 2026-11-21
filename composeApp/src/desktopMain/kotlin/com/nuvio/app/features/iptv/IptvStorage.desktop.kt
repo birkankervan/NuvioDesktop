@@ -6,4 +6,6 @@ internal actual object IptvStorage {
     private val store = DesktopStorage.store("nuvio_iptv")
     actual fun load(): String? = store.getString("account")
     actual fun save(value: String?) = store.putString("account", value)
+    actual fun loadProgress(): String? = store.getString("progress")
+    actual fun saveProgress(json: String) = store.putString("progress", json)
 }

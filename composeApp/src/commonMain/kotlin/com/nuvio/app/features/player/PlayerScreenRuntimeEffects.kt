@@ -5,6 +5,8 @@ import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.ui.LocalFold
 import com.nuvio.app.core.ui.NuvioToastController
+import com.nuvio.app.features.iptv.IptvPlaybackProgress
+import com.nuvio.app.features.iptv.isIptvMetaId
 import com.nuvio.app.features.party.PartyRepository
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.features.shuffle.EpisodeShuffleRepository
@@ -474,6 +476,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                 // passed (a configuration change recreates the composition and the player
                 // re-reads its launch from the store).
                 PlayerLaunchStore.markExited(launchId)
+                if (isIptvMetaId(parentMetaId)) IptvPlaybackProgress.flush()
             }
             playerController?.clearNowPlayingInfo()
             P2pStreamingEngine.shutdown()
@@ -565,6 +568,7 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
             isLoading = playbackSnapshot.isLoading,
             isEnded = playbackSnapshot.isEnded,
         )
+        if (isIptvMetaId(parentMetaId)) IptvPlaybackProgress.report(parentMetaId, playbackSnapshot.positionMs, playbackSnapshot.durationMs, playbackSnapshot.isEnded)
         if (playbackSnapshot.isEnded) {
             flushWatchProgress(TrackingScrobbleAction.STOP)
             previousIsPlaying = false

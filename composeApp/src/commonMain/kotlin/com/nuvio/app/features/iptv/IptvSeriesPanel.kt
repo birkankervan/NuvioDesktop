@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -66,6 +67,7 @@ internal fun IptvSeriesPanel(
     onSeason: (Int) -> Unit,
     onSelectEpisode: (Int) -> Unit,
     onPlayEpisode: (Int) -> Unit,
+    progress: Map<String, IptvProgressEntry>,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.padding(end = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -96,7 +98,7 @@ internal fun IptvSeriesPanel(
                 }
                 LazyColumn(Modifier.fillMaxSize(), state = episodeScroll) {
                     items(episodes.size, key = { episodes[it].id }) { i ->
-                        EpisodeRow(episodes[i], i, i == episodeIndex && episodeFocused, { onSelectEpisode(i) }, { onPlayEpisode(i) })
+                        EpisodeRow(episodes[i], i, progress[iptvKeyFor(episodes[i].url)], i == episodeIndex && episodeFocused, { onSelectEpisode(i) }, { onPlayEpisode(i) })
                     }
                 }
             }
@@ -105,7 +107,7 @@ internal fun IptvSeriesPanel(
 }
 
 @Composable
-private fun EpisodeRow(ep: IptvEpisode, index: Int, focused: Boolean, onSelect: () -> Unit, onOpen: () -> Unit) {
+private fun EpisodeRow(ep: IptvEpisode, index: Int, prog: IptvProgressEntry?, focused: Boolean, onSelect: () -> Unit, onOpen: () -> Unit) {
     val hover = remember { MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
     val select by rememberUpdatedState(onSelect)
@@ -123,8 +125,15 @@ private fun EpisodeRow(ep: IptvEpisode, index: Int, focused: Boolean, onSelect: 
         Text((ep.number ?: (index + 1)).toString(), Modifier.width(28.dp), maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.labelSmall)
         ep.image?.let { NuvioAsyncImage(it, null, Modifier.size(width = 64.dp, height = 36.dp).clip(RoundedCornerShape(4.dp)), contentScale = ContentScale.Crop) }
-        Text(ep.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-            color = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(ep.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+            if (prog != null && !prog.watched && prog.durationMs > 0L) {
+                LinearProgressIndicator(progress = { (prog.positionMs.toFloat() / prog.durationMs).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(2.dp))
+            }
+        }
+        if (prog?.watched == true) Text("\u2713", color = MaterialTheme.colorScheme.primary)
         Text(formatDuration(ep.durationSecs), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
     }
 }

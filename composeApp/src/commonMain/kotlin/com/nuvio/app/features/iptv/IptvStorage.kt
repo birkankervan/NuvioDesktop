@@ -4,4 +4,6 @@ package com.nuvio.app.features.iptv
 internal expect object IptvStorage {
     fun load(): String?
     fun save(value: String?)
+    fun loadProgress(): String?
+    fun saveProgress(json: String)
 }

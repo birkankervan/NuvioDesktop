@@ -42,6 +42,8 @@ internal object IptvUiState {
     var episodeIndex by mutableStateOf(0)
     /** True while keyboard focus is in the episode list instead of the series list. */
     var episodePane by mutableStateOf(false)
+    /** Progress key of the episode last opened; consumed when it turns out watched after returning from the player. */
+    var lastPlayedKey: String? = null
 
     fun selectSeries(item: IptvItem) {
         if (selected[IptvMode.SERIES]?.id == item.id) return

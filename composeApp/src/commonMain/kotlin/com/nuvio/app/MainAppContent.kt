@@ -1,6 +1,9 @@
 package com.nuvio.app
 
 import com.nuvio.app.features.iptv.IPTV_META_PREFIX
+import com.nuvio.app.features.iptv.IptvPlaybackProgress
+import com.nuvio.app.features.iptv.iptvKeyFor
+import com.nuvio.app.features.iptv.iptvResumePositionMs
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.MutableTransitionState
@@ -1544,7 +1547,7 @@ internal fun MainAppContent(
                                 },
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
                                 onIptvPlay = { title, url ->
-                                    val iptvId = "$IPTV_META_PREFIX${url.hashCode().toUInt()}"
+                                    val iptvId = iptvKeyFor(url)
                                     val launchId = PlayerLaunchStore.put(
                                         PlayerLaunch(
                                             profileId = activePlaybackProfileId,
@@ -1555,6 +1558,7 @@ internal fun MainAppContent(
                                             videoId = iptvId,
                                             parentMetaId = iptvId,
                                             parentMetaType = "tv",
+                                            initialPositionMs = iptvResumePositionMs(IptvPlaybackProgress.progress.value[iptvId]) ?: 0L,
                                         ),
                                     )
                                     navController.navigate(PlayerRoute(launchId = launchId, title = title))

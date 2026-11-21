@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -113,6 +114,18 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
     val season = seriesSel?.let { s -> st.seasonBySeries[s.id]?.takeIf { it in info?.seasons.orEmpty() } ?: info?.seasons?.firstOrNull() }
     val episodes = if (info != null && season != null) info.episodesBySeason[season].orEmpty() else emptyList()
     val epIndex = st.episodeIndex.coerceIn(0, (episodes.size - 1).coerceAtLeast(0))
+    val progress by IptvPlaybackProgress.progress.collectAsState()
+    // Back from the player: if the episode just played is now watched, move the selection to the next one (no autoplay).
+    LaunchedEffect(series, info, st.lastPlayedKey, progress) {
+        val key = st.lastPlayedKey ?: return@LaunchedEffect
+        val inf = info ?: return@LaunchedEffect
+        if (progress[key]?.watched != true) return@LaunchedEffect
+        val flat = inf.seasons.flatMap { s -> inf.episodesBySeason[s].orEmpty().mapIndexed { i, e -> Triple(s, i, e) } }
+        val at = flat.indexOfFirst { iptvKeyFor(it.third.url) == key }
+        if (at < 0) return@LaunchedEffect
+        st.lastPlayedKey = null
+        flat.getOrNull(at + 1)?.let { (s, i, _) -> seriesSel?.let { st.seasonBySeries[it.id] = s }; st.episodeIndex = i }
+    }
     val epScroll = st.episodeScroll(seriesSel?.id.orEmpty(), season ?: 0)
 
     val visibleCategories = remember(categories, st.showAdult) {
@@ -148,7 +161,7 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
     fun playEpisode(i: Int) {
         val s = seriesSel ?: return
         val ep = episodes.getOrNull(i) ?: return
-        st.episodeIndex = i; st.episodePane = true
+        st.episodeIndex = i; st.episodePane = true; st.lastPlayedKey = iptvKeyFor(ep.url)
         open(episodeTitle(s.name, ep, i), ep.url)
     }
 
@@ -251,7 +264,7 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
                     episodeIndex = epIndex, episodeFocused = st.episodePane, episodeScroll = epScroll,
                     onSeason = { s -> seriesSel?.let { st.seasonBySeries[it.id] = s }; st.episodeIndex = 0 },
                     onSelectEpisode = { i -> st.episodeIndex = i; st.episodePane = true },
-                    onPlayEpisode = ::playEpisode, modifier = Modifier.weight(1f).fillMaxSize(),
+                    onPlayEpisode = ::playEpisode, progress = progress, modifier = Modifier.weight(1f).fillMaxSize(),
                 )
             } else {
                 IptvPreviewPanel(
