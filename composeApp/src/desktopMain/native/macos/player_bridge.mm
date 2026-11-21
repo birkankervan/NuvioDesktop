@@ -86,13 +86,16 @@ static constexpr double kMaxVolumePercent = 200.0;
 @end
 
 @interface PlayerControlsWebView : WKWebView
+@property(nonatomic) BOOL preview; // IPTV preview HUD: never first responder, no title-bar drag
 @end
 
 @implementation PlayerControlsWebView
 
+- (BOOL)acceptsFirstResponder { return self.preview ? NO : [super acceptsFirstResponder]; }
+
 - (BOOL)isTitleBarPoint:(NSPoint)point {
     NSWindow *window = self.window;
-    if (!window
+    if (self.preview || !window
         || !(window.styleMask & NSWindowStyleMaskTitled)
         || !(window.styleMask & NSWindowStyleMaskFullSizeContentView)
         || (window.styleMask & NSWindowStyleMaskFullScreen)) {
@@ -1253,7 +1256,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     _videoView = [[PlayerMetalView alloc] initWithFrame:_hostView.bounds];
     [_hostView addSubview:_videoView];
 
-    if (!_previewMode) {
+    {
     _scriptHandler = [PlayerScriptHandler new];
     _scriptHandler.player = self;
     WKUserContentController *contentController = [WKUserContentController new];
@@ -1262,6 +1265,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     WKWebViewConfiguration *configuration = [WKWebViewConfiguration new];
     configuration.userContentController = contentController;
     _webView = [[PlayerControlsWebView alloc] initWithFrame:_hostView.bounds configuration:configuration];
+    ((PlayerControlsWebView *)_webView).preview = _previewMode;
     _webView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _webView.wantsLayer = YES;
     [_webView setValue:@NO forKey:@"drawsBackground"];
@@ -2948,6 +2952,10 @@ static void nuvioMpvWakeup(void *ctx) {
         }
         return;
     }
+    if (_previewMode && [type isEqualToString:@"toggleFullscreen"]) {
+        [self sendPlayerEvent:@"previewDoubleClick" value:1.0];
+        return;
+    }
     if ([type isEqualToString:@"toggleFullscreen"]) {
         [self beginFullscreenTransitionWithReason:@"control-toggle"];
     }
@@ -3338,12 +3346,13 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_createPreview(
     jobjectArray headerLines,
     jboolean playWhenReady,
     jlong initialPositionMs,
+    jstring controlsPageUrl,
     jint decoderPriority,
     jobject eventSink,
     jdouble x, jdouble y, jdouble w, jdouble h
 ) {
     return createPlayerImpl(env, hostViewPtr, sourceUrl, headerLines, playWhenReady, initialPositionMs,
-                            nullptr, decoderPriority, eventSink, true, NSMakeRect(x, y, w, h));
+                            controlsPageUrl, decoderPriority, eventSink, true, NSMakeRect(x, y, w, h));
 }
 
 // Moves/resizes the preview container(s) under the AWT content view (no player handle needed,

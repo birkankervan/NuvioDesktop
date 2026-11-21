@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.LocalNuvioPlatformDensity
+import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.player.desktop.NativePlayerBridge
 import com.nuvio.app.features.player.desktop.NativePlayerController
@@ -51,6 +52,7 @@ internal actual fun IptvPreviewSurface(url: String?, modifier: Modifier, gate: I
     val frame = remember { PreviewFrame() }
     var hostViewPtr by remember { mutableStateOf(0L) }
     val isMac = DesktopHostOs.current == DesktopHostOs.MACOS
+    var controlsVisible by remember { mutableStateOf(false) }
     val currentOnDoubleClick by rememberUpdatedState { gate.onDoubleClick() }
     // macOS: the resolved native view is the whole window, so the mpv view must be confined to the
     // host box (createPreview, no controls web view, no first-responder grab). Other OSes embed a
@@ -60,9 +62,12 @@ internal actual fun IptvPreviewSurface(url: String?, modifier: Modifier, gate: I
             NativePlayerBridge.ensureLoaded()
             if (isMac) {
                 NativePlayerBridge.createPreview(
-                    hostView, source, headers, playWhenReady, positionMs, decoder,
+                    hostView, source, headers, playWhenReady, positionMs, NativePlayerBridge.controlsPageUrl, decoder,
                     { type, value ->
                         when (type) {
+                            "cursorActivity", "keepChromeVisible" -> controlsVisible = true
+                            "hideChrome" -> controlsVisible = false
+                            "toggleFullscreen" -> SwingUtilities.invokeLater { currentOnDoubleClick() }
                             "previewDoubleClick" -> SwingUtilities.invokeLater { currentOnDoubleClick() }
                             "previewFirstFrame" -> gate.selectedAt?.let { at ->
                                 gate.selectedAt = null
@@ -156,6 +161,19 @@ internal actual fun IptvPreviewSurface(url: String?, modifier: Modifier, gate: I
             decoderPriority = decoderPriority,
             nvidiaRtxSuperResolutionEnabled = false,
             onError = {},
+        )
+    }
+
+    // HUD state; controller.updateControls stores it until the native player exists.
+    LaunchedEffect(controller, gate.title, controlsVisible) {
+        if (!isMac) return@LaunchedEffect
+        controller.updateControls(
+            PlayerControlsState(
+                title = gate.title.orEmpty(),
+                isPlaying = true,
+                controlsVisible = controlsVisible,
+                durationMs = 0L,
+            ),
         )
     }
 

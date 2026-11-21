@@ -3765,3 +3765,58 @@ svg {
   align-items: center;
   gap: 6px;
 }
+
+@media (max-width: 600px) {
+/* Small embedded surface (IPTV preview): same compaction as PiP, no PiP behaviour. */
+.player {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+}
+
+.player .header-button,
+.player .metadata,
+.player [data-command="resize"],
+.player [data-command="speed"],
+.player [data-command="sources"],
+.player [data-command="episodes"],
+.player [data-command="playNextEpisode"],
+.player .next-episode-card,
+.player .skip-prompt,
+.player .parental-guide,
+.player .opening-overlay {
+  display: none !important;
+}
+
+.player .header {
+  padding: 10px;
+}
+
+.player .header-actions {
+  margin-left: auto;
+}
+
+.player .action-row {
+  gap: 8px;
+}
+
+.player .action {
+  padding: 8px;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  justify-content: center;
+}
+
+.player .action span {
+  display: none;
+}
+
+.player .playback-status {
+  gap: 8px;
+}
+
+.player .volume-slider {
+  width: 76px;
+}
+}

@@ -63,7 +63,7 @@ internal object NativePlayerBridge {
     ): Long
 
     /**
-     * macOS only: like [create] but without the controls web view, confined to a child container at
+     * macOS only: like [create] (controls HUD included, never first responder), confined to a child container at
      * the given frame (AWT window coordinates, points). It never takes keyboard focus and forwards
      * "previewDoubleClick" through [eventSink].
      */
@@ -73,6 +73,7 @@ internal object NativePlayerBridge {
         headerLines: Array<String>,
         playWhenReady: Boolean,
         initialPositionMs: Long,
+        controlsPageUrl: String,
         decoderPriority: Int,
         eventSink: NativePlayerEventSink,
         x: Double,

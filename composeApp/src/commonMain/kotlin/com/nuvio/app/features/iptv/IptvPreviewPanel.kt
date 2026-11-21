@@ -70,7 +70,7 @@ internal fun IptvPreviewPanel(
                 previewUrl = item.url
             }
         }
-        SideEffect { gate.onDoubleClick = onOpen }
+        SideEffect { gate.onDoubleClick = onOpen; gate.title = item.name }
         if (previewAllowed) {
             // Normal volume (the player's remembered level); there is no mute hook on the controller.
             IptvPreviewSurface(previewUrl, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)), gate)

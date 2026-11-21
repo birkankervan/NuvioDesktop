@@ -1,6 +1,9 @@
 package com.nuvio.app.features.iptv
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 
 /**
@@ -10,6 +13,9 @@ import androidx.compose.ui.Modifier
 internal class IptvPreviewGate {
     /** When the current channel was selected; used only for the [IPTV-PREVIEW] timing log. */
     var selectedAt: kotlin.time.TimeMark? = null
+
+    /** Selected channel name, shown in the preview HUD (macOS). */
+    var title by mutableStateOf<String?>(null)
 
     var release: ((onDone: () -> Unit) -> Unit)? = null
 
