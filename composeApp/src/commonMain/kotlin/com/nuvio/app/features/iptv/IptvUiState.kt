@@ -11,14 +11,16 @@ private fun loadAccount(): IptvAccount? =
     IptvStorage.load()?.let { runCatching { Json.decodeFromString<IptvAccount>(it) }.getOrNull() }
         ?.let { it.copy(server = it.server.trim(), username = it.username.trim(), password = it.password.trim()) }
 
+internal enum class IptvMode { LIVE, VOD, SERIES }
+
 /**
  * Process-lifetime IPTV UI state. Navigating to the player disposes the whole tab composition
  * (NavDisplay shows only the top entry), so anything kept in `remember` was lost on Back.
- * Keys with a Boolean are `vod`.
+ * Maps keyed by [IptvMode] hold per-tab state.
  */
 internal object IptvUiState {
     var account by mutableStateOf(loadAccount())
-    var vod by mutableStateOf(false)
+    var mode by mutableStateOf(IptvMode.LIVE)
     var showAdult by mutableStateOf(false)
     var query by mutableStateOf("")
 
@@ -26,15 +28,32 @@ internal object IptvUiState {
     var previewSuspended by mutableStateOf(false)
     val previewGate = IptvPreviewGate()
 
-    val categoryIds = mutableStateMapOf<Boolean, String>()
-    val selected = mutableStateMapOf<Boolean, IptvItem>()
-    val categories = mutableStateMapOf<Boolean, List<IptvCategory>>()
-    val items = mutableStateMapOf<Pair<Boolean, String>, List<IptvItem>>()
+    val categoryIds = mutableStateMapOf<IptvMode, String>()
+    /** Selected row per tab; in SERIES it is the series (id, name, cover) as an [IptvItem]. */
+    val selected = mutableStateMapOf<IptvMode, IptvItem>()
+    val categories = mutableStateMapOf<IptvMode, List<IptvCategory>>()
+    /** LIVE and VOD streams only; series live in [seriesList]. */
+    val items = mutableStateMapOf<Pair<IptvMode, String>, List<IptvItem>>()
 
-    private val categoryScroll = HashMap<Boolean, LazyListState>()
-    private val itemScroll = HashMap<Pair<Boolean, String>, LazyListState>()
-    fun categoryScroll(vod: Boolean) = categoryScroll.getOrPut(vod) { LazyListState() }
-    fun itemScroll(vod: Boolean, categoryId: String) = itemScroll.getOrPut(vod to categoryId) { LazyListState() }
+    // Series: list per category id, seriesInfo per series id (process-lifetime caches).
+    val seriesList = mutableStateMapOf<String, List<IptvSeries>>()
+    val seriesInfos = mutableStateMapOf<String, IptvSeriesInfo>()
+    val seasonBySeries = mutableStateMapOf<String, Int>()
+    var episodeIndex by mutableStateOf(0)
+    /** True while keyboard focus is in the episode list instead of the series list. */
+    var episodePane by mutableStateOf(false)
+
+    fun selectSeries(item: IptvItem) {
+        if (selected[IptvMode.SERIES]?.id == item.id) return
+        selected[IptvMode.SERIES] = item; episodeIndex = 0; episodePane = false
+    }
+
+    private val categoryScroll = HashMap<IptvMode, LazyListState>()
+    private val itemScroll = HashMap<Pair<IptvMode, String>, LazyListState>()
+    private val episodeScroll = HashMap<Pair<String, Int>, LazyListState>()
+    fun categoryScroll(mode: IptvMode) = categoryScroll.getOrPut(mode) { LazyListState() }
+    fun itemScroll(mode: IptvMode, categoryId: String) = itemScroll.getOrPut(mode to categoryId) { LazyListState() }
+    fun episodeScroll(seriesId: String, season: Int) = episodeScroll.getOrPut(seriesId to season) { LazyListState() }
 
     private var client: XtreamClient? = null
     private var clientAccount: IptvAccount? = null
@@ -49,9 +68,10 @@ internal object IptvUiState {
     fun signOut() {
         IptvStorage.save(null)
         client?.close(); client = null; clientAccount = null
-        account = null; query = ""; previewSuspended = false
+        account = null; query = ""; previewSuspended = false; mode = IptvMode.LIVE
         categoryIds.clear(); selected.clear(); categories.clear(); items.clear()
-        categoryScroll.clear(); itemScroll.clear()
+        seriesList.clear(); seriesInfos.clear(); seasonBySeries.clear(); episodeIndex = 0; episodePane = false
+        categoryScroll.clear(); itemScroll.clear(); episodeScroll.clear()
     }
 }
 

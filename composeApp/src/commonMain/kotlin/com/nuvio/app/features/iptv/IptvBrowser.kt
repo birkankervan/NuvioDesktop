@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -64,31 +65,55 @@ private sealed interface IptvRow {
 internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit) {
     val st = IptvUiState
     val client = remember(account) { st.client(account) }
-    val vod = st.vod
-    val categoryId = st.categoryIds[vod]
-    val categories = st.categories[vod]
-    val rawItems = categoryId?.let { st.items[vod to it] }
-    val selected = st.selected[vod]
-    var error by remember(vod, categoryId) { mutableStateOf<String?>(null) }
+    val mode = st.mode
+    val series = mode == IptvMode.SERIES
+    val categoryId = st.categoryIds[mode]
+    val categories = st.categories[mode]
+    val seriesRaw = if (series) categoryId?.let { st.seriesList[it] } else null
+    // Series reuse the channel rows: a series is an IptvItem (id, name, cover) with no stream url.
+    val rawItems = if (series) remember(seriesRaw) { seriesRaw?.map { IptvItem(it.id, it.name, it.cover, "", null, it.categoryId) } }
+        else categoryId?.let { st.items[mode to it] }
+    val selected = st.selected[mode]
+    var error by remember(mode, categoryId) { mutableStateOf<String?>(null) }
     val loading = error == null && (categories == null || (categoryId != null && rawItems == null))
     val scope = rememberCoroutineScope()
     val focus = remember { FocusRequester() }
     var opening by remember { mutableStateOf(false) }
+    var searchFocused by remember { mutableStateOf(false) }
 
     // Back from the full player: give the server ~0.8s to release the old connection, then the preview may restart.
     LaunchedEffect(Unit) {
         runCatching { focus.requestFocus() }
         if (st.previewSuspended) { delay(800L); st.previewSuspended = false } // VOD path only
     }
-    LaunchedEffect(vod) {
-        if (st.categories[vod] != null) return@LaunchedEffect
-        try { st.categories[vod] = client.categories(vod) } catch (e: IptvException) { error = e.message }
+    LaunchedEffect(mode) {
+        if (st.categories[mode] != null) return@LaunchedEffect
+        try {
+            st.categories[mode] = if (series) client.seriesCategories() else client.categories(mode == IptvMode.VOD)
+        } catch (e: IptvException) { error = e.message }
     }
-    LaunchedEffect(vod, categoryId) {
+    LaunchedEffect(mode, categoryId) {
         val id = categoryId ?: return@LaunchedEffect
-        if (st.items[vod to id] != null) return@LaunchedEffect
-        try { st.items[vod to id] = client.items(vod, id) } catch (e: IptvException) { error = e.message }
+        try {
+            if (series) { if (st.seriesList[id] == null) st.seriesList[id] = client.series(id) }
+            else if (st.items[mode to id] == null) st.items[mode to id] = client.items(mode == IptvMode.VOD, id)
+        } catch (e: IptvException) { error = e.message }
     }
+
+    // Series details: debounced like the preview, cached per series id for the process lifetime.
+    val seriesSel = if (series) selected else null
+    var infoError by remember(seriesSel?.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(seriesSel?.id) {
+        val id = seriesSel?.id ?: return@LaunchedEffect
+        if (st.seriesInfos[id] != null) return@LaunchedEffect
+        delay(200L)
+        try { st.seriesInfos[id] = client.seriesInfo(id) } catch (e: IptvException) { infoError = e.message }
+    }
+    val info = seriesSel?.let { st.seriesInfos[it.id] }
+    val season = seriesSel?.let { s -> st.seasonBySeries[s.id]?.takeIf { it in info?.seasons.orEmpty() } ?: info?.seasons?.firstOrNull() }
+    val episodes = if (info != null && season != null) info.episodesBySeason[season].orEmpty() else emptyList()
+    val epIndex = st.episodeIndex.coerceIn(0, (episodes.size - 1).coerceAtLeast(0))
+    val epScroll = st.episodeScroll(seriesSel?.id.orEmpty(), season ?: 0)
 
     val visibleCategories = remember(categories, st.showAdult) {
         categories.orEmpty().let { c -> if (st.showAdult) c else c.filterNot { isAdultCategoryName(it.name) } }
@@ -104,17 +129,30 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
             }
         }
     }
-    val listState = categoryId?.let { st.itemScroll(vod, it) } ?: remember { LazyListState() }
+    val listState = categoryId?.let { st.itemScroll(mode, it) } ?: remember { LazyListState() }
 
-    fun play(item: IptvItem) {
-        st.selected[vod] = item
+    fun open(title: String, url: String) {
         if (opening) return
         opening = true
-        // Live and VOD: full player; any preview must be fully released first (max_connections=1).
-        val open = { st.previewSuspended = true; onPlay(item.name, item.url) }
+        // Full player; any preview must be fully released first (max_connections=1). Series has no preview mounted.
+        val go = { st.previewSuspended = true; onPlay(title, url) }
         val release = st.previewGate.release
-        if (release != null) release(open) else open()
+        if (release != null) release(go) else go()
     }
+
+    fun play(item: IptvItem) {
+        st.selected[mode] = item
+        open(item.name, item.url)
+    }
+
+    fun playEpisode(i: Int) {
+        val s = seriesSel ?: return
+        val ep = episodes.getOrNull(i) ?: return
+        st.episodeIndex = i; st.episodePane = true
+        open(episodeTitle(s.name, ep, i), ep.url)
+    }
+
+    fun selectRow(item: IptvItem) { if (series) st.selectSeries(item) else st.selected[mode] = item }
 
     fun move(delta: Int) {
         val channels = rows.filterIsInstance<IptvRow.Channel>()
@@ -122,7 +160,7 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
         val cur = channels.indexOfFirst { it.item.id == selected?.id }
         val next = if (cur < 0) (if (delta > 0) 0 else channels.lastIndex) else (cur + delta).coerceIn(0, channels.lastIndex)
         val item = channels[next].item
-        st.selected[vod] = item
+        selectRow(item)
         val rowIndex = rows.indexOfFirst { it is IptvRow.Channel && it.item.id == item.id }
         scope.launch {
             val visible = listState.layoutInfo.visibleItemsInfo
@@ -131,31 +169,60 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
         }
     }
 
+    fun moveEpisode(delta: Int) {
+        if (episodes.isEmpty()) return
+        val next = (epIndex + delta).coerceIn(0, episodes.lastIndex)
+        st.episodeIndex = next
+        scope.launch {
+            val visible = epScroll.layoutInfo.visibleItemsInfo
+            if (visible.isEmpty() || next <= visible.first().index) epScroll.animateScrollToItem((next - 1).coerceAtLeast(0))
+            else if (next >= visible.last().index) epScroll.animateScrollToItem((next - visible.size + 2).coerceAtLeast(0))
+        }
+    }
+
+    fun changeSeason(delta: Int) {
+        val seasons = info?.seasons ?: return
+        val next = seasons.getOrNull(seasons.indexOf(season) + delta) ?: return
+        seriesSel?.let { st.seasonBySeries[it.id] = next }
+        st.episodeIndex = 0
+    }
+
     Column(
         Modifier.fillMaxSize().padding(horizontal = 16.dp).focusRequester(focus).focusable()
             .onPreviewKeyEvent { e ->
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                val inEpisodes = series && st.episodePane && episodes.isNotEmpty()
                 when (e.key) {
-                    Key.DirectionDown -> { move(1); true }
-                    Key.DirectionUp -> { move(-1); true }
-                    Key.Enter, Key.NumPadEnter -> selected?.let { play(it); true } ?: false
+                    Key.DirectionDown -> { if (inEpisodes) moveEpisode(1) else move(1); true }
+                    Key.DirectionUp -> { if (inEpisodes) moveEpisode(-1) else move(-1); true }
+                    // Left/Right/brackets stay editable in the search field.
+                    Key.DirectionRight -> if (series && !searchFocused && !st.episodePane && episodes.isNotEmpty()) { st.episodePane = true; true } else false
+                    Key.DirectionLeft -> if (series && !searchFocused && st.episodePane) { st.episodePane = false; true } else false
+                    Key.LeftBracket, Key.PageUp -> if (inEpisodes && !searchFocused) { changeSeason(-1); true } else false
+                    Key.RightBracket, Key.PageDown -> if (inEpisodes && !searchFocused) { changeSeason(1); true } else false
+                    Key.Enter, Key.NumPadEnter ->
+                        if (inEpisodes) { playEpisode(epIndex); true }
+                        else if (series) false // a series itself is not playable
+                        else selected?.let { play(it); true } ?: false
                     else -> false
                 }
             },
     ) {
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(!vod, { st.vod = false; st.query = "" }, { Text("Live") })
-            FilterChip(vod, { st.vod = true; st.query = "" }, { Text("Movies") })
-            OutlinedTextField(st.query, { st.query = it }, Modifier.weight(1f), placeholder = { Text("Search in category") }, singleLine = true)
+            FilterChip(mode == IptvMode.LIVE, { st.mode = IptvMode.LIVE; st.query = ""; st.episodePane = false }, { Text("Live") })
+            FilterChip(mode == IptvMode.VOD, { st.mode = IptvMode.VOD; st.query = ""; st.episodePane = false }, { Text("Movies") })
+            FilterChip(series, { st.mode = IptvMode.SERIES; st.query = ""; st.episodePane = false }, { Text("Series") })
+            OutlinedTextField(st.query, { st.query = it }, Modifier.weight(1f).onFocusChanged { searchFocused = it.isFocused },
+                placeholder = { Text("Search in category") }, singleLine = true)
             FilterChip(st.showAdult, { st.showAdult = !st.showAdult }, { Text("Show adult") })
             TextButton({ st.signOut() }) { Text("Remove account") }
         }
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            LazyColumn(Modifier.width(260.dp).fillMaxSize(), state = st.categoryScroll(vod)) {
+            LazyColumn(Modifier.width(260.dp).fillMaxSize(), state = st.categoryScroll(mode)) {
                 items(visibleCategories, key = { it.id }) { c ->
-                    CategoryRow(c, c.id == categoryId, st.items[vod to c.id]?.size) {
-                        st.categoryIds[vod] = c.id; st.query = ""
+                    CategoryRow(c, c.id == categoryId, if (series) st.seriesList[c.id]?.size else st.items[mode to c.id]?.size) {
+                        st.categoryIds[mode] = c.id; st.query = ""
                     }
                 }
             }
@@ -170,18 +237,30 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
                             when (row) {
                                 is IptvRow.Header -> SectionHeader(row.label)
                                 is IptvRow.Channel -> ChannelRow(row.item, row.item.id == selected?.id,
-                                    onSelect = { st.selected[vod] = row.item }, onOpen = { play(row.item) })
+                                    onSelect = { st.episodePane = false; selectRow(row.item) },
+                                    onOpen = { if (!series) play(row.item) })
                             }
                         }
                     }
                 }
             }
-            IptvPreviewPanel(
-                item = selected, vod = vod, previewAllowed = !st.previewSuspended,
-                categoryName = categories?.firstOrNull { it.id == (selected?.categoryId ?: categoryId) }?.name,
-                client = client, gate = st.previewGate,
-                onOpen = { selected?.let(::play) }, modifier = Modifier.weight(1f).fillMaxSize(),
-            )
+            if (series) {
+                IptvSeriesPanel(
+                    item = seriesSel, series = seriesSel?.let { s -> st.seriesList[s.categoryId ?: categoryId]?.firstOrNull { it.id == s.id } },
+                    info = info, error = infoError, season = season, episodes = episodes,
+                    episodeIndex = epIndex, episodeFocused = st.episodePane, episodeScroll = epScroll,
+                    onSeason = { s -> seriesSel?.let { st.seasonBySeries[it.id] = s }; st.episodeIndex = 0 },
+                    onSelectEpisode = { i -> st.episodeIndex = i; st.episodePane = true },
+                    onPlayEpisode = ::playEpisode, modifier = Modifier.weight(1f).fillMaxSize(),
+                )
+            } else {
+                IptvPreviewPanel(
+                    item = selected, vod = mode == IptvMode.VOD, previewAllowed = !st.previewSuspended,
+                    categoryName = categories?.firstOrNull { it.id == (selected?.categoryId ?: categoryId) }?.name,
+                    client = client, gate = st.previewGate,
+                    onOpen = { selected?.let(::play) }, modifier = Modifier.weight(1f).fillMaxSize(),
+                )
+            }
         }
     }
 }
