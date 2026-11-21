@@ -31,6 +31,32 @@ internal data class IptvItem(
     val categoryId: String? = null,
 )
 
+internal data class IptvSeries(
+    val id: String,
+    val name: String,
+    val cover: String?,
+    val plot: String?,
+    val rating: String?,
+    val categoryId: String?,
+)
+
+internal data class IptvEpisode(
+    val id: String,
+    val season: Int,
+    val number: Int?,
+    val title: String,
+    val url: String,
+    val durationSecs: Int?,
+    val plot: String?,
+    val image: String?,
+)
+
+internal data class IptvSeriesInfo(
+    val series: IptvSeries?,
+    val seasons: List<Int>,
+    val episodesBySeason: Map<Int, List<IptvEpisode>>,
+)
+
 /** One now/next programme; times are epoch seconds. */
 internal data class IptvEpgEntry(val title: String, val description: String, val startSec: Long, val endSec: Long)
 
@@ -69,13 +95,24 @@ internal class XtreamClient(private val account: IptvAccount) {
     }
 
     suspend fun categories(vod: Boolean): List<IptvCategory> =
-        (call(if (vod) "get_vod_categories" else "get_live_categories") as? JsonArray).orEmpty()
+        categoriesFor(if (vod) "get_vod_categories" else "get_live_categories")
+
+    suspend fun seriesCategories(): List<IptvCategory> = categoriesFor("get_series_categories")
+
+    private suspend fun categoriesFor(action: String): List<IptvCategory> =
+        (call(action) as? JsonArray).orEmpty()
             .mapNotNull { (it as? JsonObject) }
             .mapNotNull { o ->
                 val id = o.str("category_id") ?: return@mapNotNull null
                 IptvCategory(id, o.str("category_name") ?: id)
             }
             .distinctBy { it.id }
+
+    suspend fun series(categoryId: String): List<IptvSeries> =
+        parseSeriesList(call("get_series", categoryId), categoryId)
+
+    suspend fun seriesInfo(seriesId: String): IptvSeriesInfo =
+        parseSeriesInfo(call("get_series_info", extra = mapOf("series_id" to seriesId)), account)
 
     suspend fun items(vod: Boolean, categoryId: String): List<IptvItem> =
         (call(if (vod) "get_vod_streams" else "get_live_streams", categoryId) as? JsonArray).orEmpty()
@@ -113,6 +150,75 @@ internal class XtreamClient(private val account: IptvAccount) {
 
 private fun JsonObject.str(key: String): String? =
     (get(key) as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+
+internal fun parseSeriesList(root: JsonElement, categoryId: String?): List<IptvSeries> =
+    (root as? JsonArray).orEmpty()
+        .mapNotNull { it as? JsonObject }
+        .mapNotNull { o ->
+            val id = o.str("series_id") ?: return@mapNotNull null
+            IptvSeries(
+                id, o.str("name") ?: id,
+                o.str("cover")?.takeIf { it.startsWith("http", ignoreCase = true) },
+                o.str("plot"), o.str("rating"), categoryId,
+            )
+        }
+        .distinctBy { it.id }
+
+private fun parseDuration(o: JsonObject?): Int? {
+    o ?: return null
+    o.str("duration_secs")?.toIntOrNull()?.let { return it }
+    val parts = o.str("duration")?.split(":")?.map { it.trim().toIntOrNull() ?: return null } ?: return null
+    return when (parts.size) {
+        3 -> parts[0] * 3600 + parts[1] * 60 + parts[2]
+        2 -> parts[0] * 60 + parts[1]
+        else -> null
+    }
+}
+
+internal fun parseSeriesInfo(root: JsonElement, account: IptvAccount): IptvSeriesInfo {
+    val obj = root as? JsonObject
+    val info = obj?.get("info") as? JsonObject
+    val series = info?.let {
+        val name = it.str("name") ?: return@let null
+        IptvSeries(
+            it.str("series_id") ?: name, name,
+            (it.str("cover") ?: it.str("movie_image"))?.takeIf { c -> c.startsWith("http", ignoreCase = true) },
+            it.str("plot"), it.str("rating"), it.str("category_id"),
+        )
+    }
+    // Object {"1":[..]}, array of arrays, or empty array. Pair = (season hint from container, episode).
+    val raw: List<Pair<Int?, JsonObject>> = when (val eps = obj?.get("episodes")) {
+        is JsonObject -> eps.entries.flatMap { (k, v) ->
+            (v as? JsonArray).orEmpty().mapNotNull { e -> (e as? JsonObject)?.let { k.trim().toIntOrNull() to it } }
+        }
+        is JsonArray -> eps.flatMapIndexed { i, v ->
+            when (v) {
+                is JsonArray -> v.mapNotNull { e -> (e as? JsonObject)?.let { (i + 1) to it } }
+                is JsonObject -> listOf(null to v)
+                else -> emptyList()
+            }
+        }
+        else -> emptyList()
+    }
+    val episodes = raw.mapNotNull { (hint, o) ->
+        val id = o.str("id") ?: return@mapNotNull null
+        val ext = o.str("container_extension") ?: "mp4"
+        val ei = o["info"] as? JsonObject
+        IptvEpisode(
+            id = id,
+            season = o.str("season")?.toIntOrNull() ?: hint ?: 1,
+            number = o.str("episode_num")?.toIntOrNull(),
+            title = o.str("title") ?: id,
+            url = "${account.server}/series/${account.username.encodeURLPathPart()}/${account.password.encodeURLPathPart()}/$id.$ext",
+            durationSecs = parseDuration(ei),
+            plot = ei?.str("plot"),
+            image = ei?.str("movie_image")?.takeIf { it.startsWith("http", ignoreCase = true) },
+        )
+    }.distinctBy { it.id }
+    val bySeason = episodes.groupBy { it.season }.toSortedMap()
+        .mapValues { (_, l) -> l.sortedBy { it.number ?: Int.MAX_VALUE } }
+    return IptvSeriesInfo(series, bySeason.keys.toList(), bySeason)
+}
 
 internal fun normalizeServer(raw: String): String {
     var s = raw.trim().trimEnd('/')
