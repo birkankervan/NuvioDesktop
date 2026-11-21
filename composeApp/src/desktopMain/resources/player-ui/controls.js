@@ -1610,7 +1610,39 @@ const setFontPickerOpen = open => {
   setModalVisibility(subtitleFontModal, open);
 };
 
+// IPTV preview: Kotlin supplies no subtitle option/language items, so list mpv's tracks directly.
+const renderPreviewSubtitleList = () => {
+  subtitlePanelTitle.textContent = state.subtitlesPanelTitle || "Subtitles";
+  subtitleTrackList.textContent = "";
+  const tracks = normalizeTracks(state.subtitleTracks);
+  const rows = [{ label: "Off", id: -1, selected: !tracks.some(track => track.selected) }].concat(tracks.map(track => ({
+    label: track.label || displayLanguageName(track.language) || `Track ${Number(track.index || 0) + 1}`,
+    id: trackIdValue(track),
+    selected: Boolean(track.selected),
+  })));
+  rows.forEach(item => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `track-row${item.selected ? " selected" : ""}`;
+    row.addEventListener("click", event => {
+      event.stopPropagation();
+      send("selectSubtitleTrack", item.id);
+      window.setTimeout(closePlayerModal, 120);
+    });
+    const label = document.createElement("span");
+    label.className = "track-label";
+    label.textContent = item.label;
+    row.appendChild(label);
+    row.appendChild(buildCheckIcon());
+    subtitleTrackList.appendChild(row);
+  });
+};
+
 const renderSubtitleModal = () => {
+  if (document.documentElement.classList.contains("preview")) {
+    renderPreviewSubtitleList();
+    return;
+  }
   subtitlePanelTitle.textContent = state.subtitlesPanelTitle || "Subtitles";
   subtitleLanguageRailTitle.textContent = state.subtitleLanguagesLabel || "Languages";
   subtitleOptionsRailTitle.textContent = state.subtitlesPanelTitle || "Subtitles";
@@ -2770,6 +2802,11 @@ const renderChrome = () => {
   if (!state.isInPip && isPipLocked) setPipLocked(false);
   root.classList.toggle("chrome-hidden", Boolean(showError || !state.controlsVisible));
   root.classList.toggle("modal-open", Boolean(activeModal));
+  // Drives the IPTV preview bar (html.preview rules in controls.css); no effect elsewhere.
+  const dataset = document.documentElement.dataset;
+  dataset.hasDuration = durationMs > 0 ? "1" : "";
+  dataset.hasSubs = normalizeTracks(state.subtitleTracks).length > 0 ? "1" : "";
+  dataset.multiAudio = normalizeTracks(state.audioTracks).length > 1 ? "1" : "";
   root.classList.toggle("info-open", activeModal === "streamInfo");
   root.classList.toggle("source-visible", Boolean(!showError && !isPlaying && !state.isLoading && (state.streamTitle || state.providerName)));
   syncHiddenCursor();

@@ -2932,7 +2932,17 @@ static void nuvioMpvWakeup(void *ctx) {
     NSNumber *value = [rawValue isKindOfClass:[NSNumber class]] ? rawValue : nil;
     if ([type isEqualToString:@"controlsReady"]) {
         _controlsWebReady = YES;
+        if (_previewMode) {
+            // Once per page load: controlsReady fires on every (re)load of controls.html.
+            [_webView evaluateJavaScript:@"document.documentElement.classList.add('preview')" completionHandler:nil];
+        }
         [self flushPendingControlsJsonIfReady];
+        [self syncControls];
+        return;
+    }
+    if (_previewMode && [type isEqualToString:@"selectAudioTrack"] && value) {
+        // Preview has no Kotlin controller handling this; value is the mpv track id.
+        [self selectAudioTrackId:(int)llround(value.doubleValue)];
         [self syncControls];
         return;
     }

@@ -3766,57 +3766,206 @@ svg {
   gap: 6px;
 }
 
-@media (max-width: 600px) {
-/* Small embedded surface (IPTV preview): same compaction as PiP, no PiP behaviour. */
-.player {
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
-}
-
-.player .header-button,
-.player .metadata,
-.player [data-command="resize"],
-.player [data-command="speed"],
-.player [data-command="sources"],
-.player [data-command="episodes"],
-.player [data-command="playNextEpisode"],
-.player .next-episode-card,
-.player .skip-prompt,
-.player .parental-guide,
-.player .opening-overlay {
+/* IPTV preview (~400x225): one thin bottom bar. Class added by player_bridge.mm after controlsReady.
+   Visibility reuses .chrome-hidden (opacity fade on .progress / .header-actions / .bottom-gradient). */
+html.preview .top-gradient,
+html.preview .metadata,
+html.preview .chapter-title,
+html.preview .chapter-marks,
+html.preview .time-row,
+html.preview .center-controls,
+html.preview .pause-metadata-overlay,
+html.preview .parental-guide,
+html.preview .skip-prompt,
+html.preview .next-episode-card,
+html.preview .party-pill,
+html.preview .player-toast,
+html.preview .modal-layer:not(#audioModal):not(#subtitleModal),
+html.preview .action-pill .action:not(#toggle):not([data-command="subtitles"]):not([data-command="audio"]),
+html.preview .header-actions .header-button:not(#fullscreenButton) {
   display: none !important;
 }
 
-.player .header {
-  padding: 10px;
+html.preview .bottom-gradient {
+  height: 36px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, .6));
 }
 
-.player .header-actions {
-  margin-left: auto;
-}
-
-.player .action-row {
-  gap: 8px;
-}
-
-.player .action {
-  padding: 8px;
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
-  min-height: 40px;
+html.preview .progress {
+  left: 0;
+  right: 44px;
+  bottom: 0;
+  height: 36px;
+  padding: 0 0 0 8px;
   justify-content: center;
 }
 
-.player .action span {
+html.preview .action-row {
+  margin: 0;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+html.preview .action-pill {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+html.preview .action {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  justify-content: center;
+}
+
+html.preview .action span {
   display: none;
 }
 
-.player .playback-status {
-  gap: 8px;
+html.preview .action svg,
+html.preview .volume-control svg {
+  width: 18px;
+  height: 18px;
 }
 
-.player .volume-slider {
-  width: 76px;
+html.preview .playback-status {
+  margin-left: 0;
 }
+
+html.preview .volume-control {
+  gap: 4px;
+}
+
+html.preview .volume-button {
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+}
+
+html.preview .volume-slider {
+  width: 60px;
+}
+
+html.preview .header {
+  top: auto;
+  bottom: 0;
+  left: auto;
+  right: 8px;
+  height: 36px;
+  align-items: center;
+}
+
+html.preview .header-button {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+}
+
+html.preview .header-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Dynamic parts (attributes set in renderChrome from playerUpdate): CC only with subtitle tracks,
+   audio only with 2+ audio tracks, timeline/time only for VOD (duration > 0). */
+html.preview:not([data-has-subs]) .action[data-command="subtitles"],
+html.preview:not([data-multi-audio]) .action[data-command="audio"],
+html.preview:not([data-has-duration]) .scrub,
+html.preview:not([data-has-duration]) .time-label {
+  display: none !important;
+}
+
+html.preview .progress {
+  height: auto;
+  min-height: 36px;
+  right: 0;
+  padding: 0 44px 0 8px;
+}
+
+html.preview .scrub {
+  height: 12px;
+  margin: 0 -36px 0 -8px;
+  width: auto;
+}
+
+html.preview .scrub::-webkit-slider-runnable-track {
+  height: 3px;
+  margin-top: 4.5px;
+}
+
+html.preview .action-row {
+  margin-top: 0;
+  min-height: 32px;
+}
+
+html.preview .time-label {
+  margin-left: 6px;
+  font-size: 10px;
+}
+
+/* Audio / subtitle panels inside the ~400x225 box. */
+html.preview .player-rail-modal {
+  padding: 6px 6px 44px;
+  background: rgba(0, 0, 0, .6);
+  align-items: stretch;
+  justify-content: center;
+}
+
+html.preview .player-rail-modal .track-panel,
+html.preview .audio-rail-panel,
+html.preview .subtitle-rail-panel {
+  width: 100% !important;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+}
+
+html.preview .player-rail-modal .track-header {
+  padding: 0 0 4px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+html.preview .subtitle-rails {
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  min-height: 0;
+}
+
+html.preview .subtitle-rail-title,
+html.preview .subtitle-options-rail,
+html.preview .subtitle-style-rail {
+  display: none !important;
+}
+
+html.preview .player-rail-modal .track-list,
+html.preview .audio-rail-panel .track-list {
+  max-height: 100%;
+  gap: 2px;
+  padding: 2px 0;
+  overflow-y: auto;
+}
+
+html.preview .track-row {
+  min-height: 24px;
+  padding: 3px 8px;
+  gap: 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+html.preview .track-row .track-check {
+  width: 12px;
+  height: 12px;
+}
+
+html.preview .audio-track-name,
+html.preview .audio-track-language {
+  font-size: 11px;
+  line-height: 14px;
 }
