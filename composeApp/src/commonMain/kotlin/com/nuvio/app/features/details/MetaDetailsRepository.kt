@@ -1,5 +1,6 @@
 package com.nuvio.app.features.details
 
+import com.nuvio.app.features.iptv.isIptvMetaId
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.AddonManifest
 import com.nuvio.app.features.addons.AddonRepository
@@ -207,6 +208,7 @@ object MetaDetailsRepository {
     }
 
     suspend fun fetch(type: String, id: String, cacheResult: Boolean = true): MetaDetails? {
+        if (isIptvMetaId(id)) return null
         val requestKey = "$type:$id"
         cachedMetaByRequestKey[requestKey]?.let { return it.baseMeta }
         ServerItemRef.parse(id)?.let { ref ->

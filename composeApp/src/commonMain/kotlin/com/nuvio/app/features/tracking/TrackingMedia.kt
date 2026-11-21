@@ -1,5 +1,7 @@
 package com.nuvio.app.features.tracking
 
+import com.nuvio.app.features.iptv.isIptvMetaId
+
 enum class TrackingMediaKind {
     MOVIE,
     SHOW,
@@ -150,7 +152,7 @@ fun buildTrackingMediaReference(
         .mergeMissing(parseTrackingExternalIds(videoId))
     return TrackingMediaReference(
         kind = trackingMediaKind(contentType, ids),
-        title = title?.trim()?.takeIf(String::isNotBlank),
+        title = title?.trim()?.takeIf { it.isNotBlank() && !isIptvMetaId(parentMetaId) },
         year = extractTrackingYear(releaseInfo),
         ids = ids,
         episode = episodeNumber?.let { number ->

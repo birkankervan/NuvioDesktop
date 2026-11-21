@@ -1,6 +1,7 @@
 package com.nuvio.app.features.addons
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.iptv.isIptvMetaId
 import com.nuvio.app.features.servers.ServerItemRef
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -57,6 +58,7 @@ object AddonEventDispatcher {
         currentTimeMs: Long,
         durationMs: Long,
     ) {
+        if (isIptvMetaId(target.videoId)) return
         dispatch(
             resource = ADDON_PLAYER_RESOURCE,
             type = target.type,

@@ -1,5 +1,6 @@
 package com.nuvio.app
 
+import com.nuvio.app.features.iptv.IPTV_META_PREFIX
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.MutableTransitionState
@@ -442,6 +443,7 @@ internal fun MainAppContent(
                 searchScrollToTopRequests.tryEmit(Unit)
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
+            AppScreenTab.Iptv -> Unit
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
         }
     }
@@ -1541,6 +1543,22 @@ internal fun MainAppContent(
                                     }
                                 },
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
+                                onIptvPlay = { title, url ->
+                                    val iptvId = "$IPTV_META_PREFIX${url.hashCode().toUInt()}"
+                                    val launchId = PlayerLaunchStore.put(
+                                        PlayerLaunch(
+                                            profileId = activePlaybackProfileId,
+                                            title = title,
+                                            sourceUrl = url,
+                                            streamTitle = title,
+                                            providerName = "IPTV",
+                                            videoId = iptvId,
+                                            parentMetaId = iptvId,
+                                            parentMetaType = "tv",
+                                        ),
+                                    )
+                                    navController.navigate(PlayerRoute(launchId = launchId, title = title))
+                                },
                                 onContinueWatchingClick = onContinueWatchingClick,
                                 onContinueWatchingLongPress = onContinueWatchingLongPress,
                                 onSwitchProfile = onSwitchProfile,

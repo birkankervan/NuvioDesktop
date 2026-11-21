@@ -1,5 +1,6 @@
 package com.nuvio.app.features.watchprogress
 
+import com.nuvio.app.features.iptv.isIptvMetaId
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
@@ -1315,6 +1316,7 @@ object WatchProgressRepository {
         persist: Boolean,
         syncRemote: Boolean,
     ) {
+        if (isIptvMetaId(session.parentMetaId)) return
         val targetProfileId = session.profileId
         val positionMs = snapshot.positionMs.coerceAtLeast(0L)
         val durationMs = snapshot.durationMs.coerceAtLeast(0L)

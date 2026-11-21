@@ -61,6 +61,8 @@ internal class NativePlayerController(
         NativePlayerBridge.ensureLoaded()
         NativePlayerBridge.create(hostViewPtr, source, headers, playWhenReady, positionMs, controlsUrl, decoder, rtx, rtxHdr, sink)
     },
+    /** Preview only: switch the live core to another URL in place (null = always recreate). */
+    private val nativeLoadUrl: ((Long, String) -> Unit)? = null,
     private val nativeDispose: (Long) -> Unit = NativePlayerBridge::dispose,
     private val nativeSeekTo: (Long, Long) -> Unit = NativePlayerBridge::seekTo,
     private val isHostDisplayable: () -> Boolean = { host.isDisplayable },
@@ -95,6 +97,7 @@ internal class NativePlayerController(
 
     @Volatile
     private var handle: Long = 0L
+    private var handleDecoderPriority: Int = -1
 
     /** Native teardown of the previous player, if one is still running. */
     @Volatile
@@ -194,6 +197,14 @@ internal class NativePlayerController(
                 return@invokeLater
             }
             if (deferAttachUntilCreatesComplete()) return@invokeLater
+            val live = handle
+            val loadUrl = nativeLoadUrl
+            if (loadUrl != null && live != 0L && pending.headerLines.isEmpty() &&
+                pending.decoderPriority == handleDecoderPriority && !pending.sourceUrl.startsWith("file:", ignoreCase = true)
+            ) {
+                // Same mpv core, loadfile replace: the old stream is closed by mpv before the new one opens.
+                if (runCatching { loadUrl(live, pending.sourceUrl) }.isSuccess) return@invokeLater
+            }
             disposePlayerHandle()
             val teardown = disposeInFlight
             if (teardown == null || !teardown.isAlive) {
@@ -329,6 +340,7 @@ internal class NativePlayerController(
                     val accepted = synchronized(lifecycleLock) {
                         if (!releaseRequested && terminalReleaseFailure == null && pendingSource === pending) {
                             handle = created
+                            handleDecoderPriority = pending.decoderPriority
                             true
                         } else {
                             false

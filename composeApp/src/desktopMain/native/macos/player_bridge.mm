@@ -129,13 +129,17 @@ static constexpr double kMaxVolumePercent = 200.0;
                    decoderPriority:(int)decoderPriority
                            javaVm:(JavaVM *)javaVm
                         eventSink:(jobject)eventSink
-                      eventMethod:(jmethodID)eventMethod;
+                      eventMethod:(jmethodID)eventMethod
+                      previewMode:(BOOL)previewMode
+                     previewFrame:(NSRect)previewFrame;
+- (void)sendPlayerEvent:(NSString *)type value:(double)value;
 - (void)shutdown;
 - (void)updateControlsJson:(NSString *)controlsJson;
 - (void)requestFocus;
 - (void)beginWindowDrag;
 - (void)reparentSurfaceToHostView:(NSView *)hostView;
 - (void)setPaused:(BOOL)paused;
+- (void)loadPreviewUrl:(NSString *)url;
 - (BOOL)isPaused;
 - (void)seekToMilliseconds:(long long)positionMs;
 - (void)seekByMilliseconds:(long long)offsetMs;
@@ -1083,6 +1087,33 @@ static NSString *javaScriptStringLiteral(NSString *value) {
     return [jsonArray substringWithRange:NSMakeRange(1, jsonArray.length - 2)];
 }
 
+// Preview mode: a plain container sized to the embedded Compose box. It never takes first responder
+// (so keyboard focus stays with the AWT view) and reports double-clicks, which the native video
+// view would otherwise swallow, back to the JVM.
+@interface NuvioPreviewContainerView : NSView
+@property(nonatomic, weak) MpvWebPlayer *player;
+@property(nonatomic) BOOL fullWindow; // in-place fullscreen: follows the content view, ignores setPreviewFrame
+@end
+
+@implementation NuvioPreviewContainerView
+- (BOOL)acceptsFirstResponder { return NO; }
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
+- (void)mouseDown:(NSEvent *)event {
+    if (event.clickCount == 2) {
+        [self.player sendPlayerEvent:@"previewDoubleClick" value:1.0];
+    }
+}
+@end
+
+// Frame in AWT window coordinates (points, origin top-left) -> contentView coordinates.
+static NSRect previewFrameInContentView(NSView *contentView, NSRect awtFrame) {
+    NSRect frame = awtFrame;
+    if (!contentView.isFlipped) {
+        frame.origin.y = contentView.bounds.size.height - awtFrame.origin.y - awtFrame.size.height;
+    }
+    return frame;
+}
+
 static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *value) {
     mpv_set_option_string(mpv, name, value);
 }
@@ -1131,6 +1162,8 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     std::atomic_bool _aoIsAvfoundation;
     std::atomic<double> _requestedVolumePercent;
     BOOL _didFocusControlsWebView;
+    BOOL _previewMode;
+    NuvioPreviewContainerView *_previewContainer;
     BOOL _controlsWebReady;
     BOOL _fullscreenTransitionActive;
     NSString *_pendingControlsJson;
@@ -1148,6 +1181,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     uint64_t _cachedPositionGeneration;
     std::atomic<double> _cachedCacheAheadSeconds;
     std::atomic<double> _cachedSpeed;
+    std::atomic<double> _previewLoadAt; // CACurrentMediaTime() of the last preview loadfile, 0 = reported
     std::atomic_bool _cachedPaused;
     std::atomic_bool _cachedLoading;
     std::atomic_bool _cachedEnded;
@@ -1172,7 +1206,9 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
                    decoderPriority:(int)decoderPriority
                            javaVm:(JavaVM *)javaVm
                         eventSink:(jobject)eventSink
-                      eventMethod:(jmethodID)eventMethod {
+                      eventMethod:(jmethodID)eventMethod
+                      previewMode:(BOOL)previewMode
+                     previewFrame:(NSRect)previewFrame {
     self = [super init];
     if (!self) {
         return nil;
@@ -1195,7 +1231,20 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     _eventSink = eventSink;
     _eventMethod = eventMethod;
 
-    _hostView = hostView;
+    _previewMode = previewMode;
+    NSResponder *previousFirstResponder = hostView.window.firstResponder;
+    if (_previewMode) {
+        // hostView is the whole AWT window content view; confine everything to a child container.
+        _previewContainer = [[NuvioPreviewContainerView alloc]
+            initWithFrame:previewFrameInContentView(hostView, previewFrame)];
+        _previewContainer.player = self;
+        _previewContainer.wantsLayer = YES;
+        _previewContainer.layer.masksToBounds = YES;
+        [hostView addSubview:_previewContainer];
+        _hostView = _previewContainer;
+    } else {
+        _hostView = hostView;
+    }
     _hostView.wantsLayer = YES;
     _hostView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [_hostView setPostsFrameChangedNotifications:YES];
@@ -1204,6 +1253,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     _videoView = [[PlayerMetalView alloc] initWithFrame:_hostView.bounds];
     [_hostView addSubview:_videoView];
 
+    if (!_previewMode) {
     _scriptHandler = [PlayerScriptHandler new];
     _scriptHandler.player = self;
     WKUserContentController *contentController = [WKUserContentController new];
@@ -1226,6 +1276,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
         [_webView loadFileURL:controlsURL allowingReadAccessToURL:[controlsURL URLByDeletingLastPathComponent]];
     } else {
         [_webView loadRequest:[NSURLRequest requestWithURL:controlsURL]];
+    }
     }
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(hostViewFrameDidChange:)
@@ -1260,11 +1311,20 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
         }
         return [strongSelf handleMediaKeyEvent:event];
     }];
-    [self activateRemoteCommands];
+    if (!_previewMode) {
+        [self activateRemoteCommands];
+    }
     [self layoutNativeSubviews];
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [self focusControlsWebViewIfNeeded];
-    });
+    if (_previewMode) {
+        NSWindow *window = hostView.window;
+        if (window && previousFirstResponder && window.firstResponder != previousFirstResponder) {
+            [window makeFirstResponder:previousFirstResponder];
+        }
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self focusControlsWebViewIfNeeded];
+        });
+    }
 
     [self startMpvWithSource:sourceUrl
                  headerLines:headerLines
@@ -1287,7 +1347,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
 }
 
 - (void)requestFocus {
-    if (!_webView || !_webView.window) {
+    if (_previewMode || !_webView || !_webView.window) {
         return;
     }
     _didFocusControlsWebView = YES;
@@ -1762,6 +1822,17 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     setMpvOptionString(_mpv, "hdr-compute-peak", "no");
     setMpvOptionString(_mpv, "dither-depth", "auto");
     setMpvOptionString(_mpv, "demuxer-max-bytes", "150MiB");
+    if (_previewMode) {
+        // Small live preview: start fast. live_start_index=-1 = newest HLS segment (ffmpeg hls demuxer).
+        setMpvOptionString(_mpv, "ytdl", "no");
+        setMpvOptionString(_mpv, "demuxer-lavf-analyzeduration", "0.5");
+        setMpvOptionString(_mpv, "demuxer-lavf-probesize", "500000");
+        setMpvOptionString(_mpv, "demuxer-lavf-o", "live_start_index=-1");
+        setMpvOptionString(_mpv, "hls-bitrate", "min");
+        setMpvOptionString(_mpv, "cache", "yes");
+        setMpvOptionString(_mpv, "demuxer-readahead-secs", "2");
+        setMpvOptionString(_mpv, "cache-pause-initial", "no");
+    }
     setMpvOptionString(
         _mpv,
         "stream-lavf-o",
@@ -1792,6 +1863,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
         @throw [NSException exceptionWithName:@"PlayerBridgeError" reason:reason userInfo:nil];
     }
 
+    _previewLoadAt.store(_previewMode ? CACurrentMediaTime() : 0.0);
     std::vector<const char *> command = {"loadfile", sourceUrl.UTF8String};
     std::string loadOptions;
     if (initialPositionMs > 0) {
@@ -2109,6 +2181,8 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     [_webView.configuration.userContentController removeScriptMessageHandlerForName:@"player"];
     [_webView removeFromSuperview];
     [_videoView removeFromSuperview];
+    [_previewContainer removeFromSuperview];
+    _previewContainer = nil;
     _webView = nil;
     _videoView = nil;
     _scriptHandler = nil;
@@ -2224,10 +2298,26 @@ static void nuvioMpvWakeup(void *ctx) {
                 }
                 break;
             }
+            case MPV_EVENT_PLAYBACK_RESTART: {
+                double at = _previewLoadAt.exchange(0.0);
+                if (_previewMode && at > 0.0) {
+                    [self sendPlayerEvent:@"previewFirstFrame" value:(CACurrentMediaTime() - at) * 1000.0];
+                }
+                break;
+            }
             default:
                 break;
         }
     }
+}
+
+// Preview only: switch channel on the same mpv core. loadfile replace closes the old stream first.
+- (void)loadPreviewUrl:(NSString *)url {
+    mpv_handle *mpv = _mpv;
+    if (!mpv || url.length == 0) return;
+    _previewLoadAt.store(CACurrentMediaTime());
+    const char *cmd[] = {"loadfile", url.UTF8String, "replace", NULL};
+    mpv_command_async(mpv, 0, cmd);
 }
 
 - (void)stopMpvEventDrain {
@@ -3216,6 +3306,10 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setMacosWindowFull
     });
 }
 
+static jlong createPlayerImpl(JNIEnv *env, jlong hostViewPtr, jstring sourceUrl, jobjectArray headerLines,
+                              jboolean playWhenReady, jlong initialPositionMs, jstring controlsPageUrl,
+                              jint decoderPriority, jobject eventSink, BOOL previewMode, NSRect previewFrame);
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
     JNIEnv *env,
@@ -3230,6 +3324,178 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
     jboolean nvidiaRtxSuperResolutionEnabled,
     jboolean /*nvidiaRtxHdrEnabled*/,
     jobject eventSink
+) {
+    return createPlayerImpl(env, hostViewPtr, sourceUrl, headerLines, playWhenReady, initialPositionMs,
+                            controlsPageUrl, decoderPriority, eventSink, false, NSZeroRect);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_createPreview(
+    JNIEnv *env,
+    jobject /* bridge */,
+    jlong hostViewPtr,
+    jstring sourceUrl,
+    jobjectArray headerLines,
+    jboolean playWhenReady,
+    jlong initialPositionMs,
+    jint decoderPriority,
+    jobject eventSink,
+    jdouble x, jdouble y, jdouble w, jdouble h
+) {
+    return createPlayerImpl(env, hostViewPtr, sourceUrl, headerLines, playWhenReady, initialPositionMs,
+                            nullptr, decoderPriority, eventSink, true, NSMakeRect(x, y, w, h));
+}
+
+// Moves/resizes the preview container(s) under the AWT content view (no player handle needed,
+// so a concurrent dispose cannot leave a dangling pointer).
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setPreviewFrame(
+    JNIEnv * /* env */,
+    jobject /* bridge */,
+    jlong hostViewPtr,
+    jdouble x, jdouble y, jdouble w, jdouble h
+) {
+    NSView *hostView = (__bridge NSView *)(void *)(intptr_t)hostViewPtr;
+    if (!hostView) return;
+    NSRect awtFrame = NSMakeRect(x, y, w, h);
+    runOnMainAsync(^{
+        for (NSView *sub in [hostView.subviews copy]) {
+            if ([sub isKindOfClass:[NuvioPreviewContainerView class]]) {
+                // fullWindow: the AWT content view doesn't autoresize subviews, so track its bounds here.
+                NSRect frame = ((NuvioPreviewContainerView *)sub).fullWindow
+                    ? hostView.bounds : previewFrameInContentView(hostView, awtFrame);
+                if (!NSEqualRects(sub.frame, frame)) sub.frame = frame;
+            }
+        }
+    });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setPreviewHidden(
+    JNIEnv * /* env */,
+    jobject /* bridge */,
+    jlong hostViewPtr,
+    jboolean hidden
+) {
+    NSView *hostView = (__bridge NSView *)(void *)(intptr_t)hostViewPtr;
+    if (!hostView) return;
+    BOOL hide = hidden == JNI_TRUE;
+    runOnMainAsync(^{
+        for (NSView *sub in [hostView.subviews copy]) {
+            if ([sub isKindOfClass:[NuvioPreviewContainerView class]]) sub.hidden = hide;
+        }
+    });
+}
+
+static BOOL gPreviewEnteredWindowFullscreen = NO;
+static id gPreviewFsEnterObserver = nil;
+static id gPreviewFsResizeObserver = nil;
+static id gPreviewFsExitObserver = nil;
+
+// Backup for AWT resize events that arrive before the native window has finished resizing.
+static void refitFullWindowPreviews(NSView *hostView) {
+    for (NSView *sub in [hostView.subviews copy]) {
+        if (![sub isKindOfClass:[NuvioPreviewContainerView class]]) continue;
+        if (((NuvioPreviewContainerView *)sub).fullWindow && !NSEqualRects(sub.frame, hostView.bounds)) sub.frame = hostView.bounds;
+    }
+}
+
+static void registerPreviewFullscreenObservers(NSView *hostView) {
+    if (gPreviewFsEnterObserver) return;
+    __weak NSView *weakHost = hostView;
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    void (^refit)(NSNotification *) = ^(NSNotification *n) {
+        NSView *host = weakHost;
+        if (host) refitFullWindowPreviews(host);
+    };
+    gPreviewFsEnterObserver = [nc addObserverForName:NSWindowDidEnterFullScreenNotification object:nil
+                                               queue:[NSOperationQueue mainQueue] usingBlock:refit];
+    gPreviewFsResizeObserver = [nc addObserverForName:NSWindowDidResizeNotification object:nil
+                                                queue:[NSOperationQueue mainQueue] usingBlock:refit];
+    // Left macOS fullscreen via the green button: tell the JVM so its state doesn't go stale.
+    gPreviewFsExitObserver = [nc addObserverForName:NSWindowDidExitFullScreenNotification object:nil
+                                              queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *n) {
+        NSView *host = weakHost;
+        if (!host || !gPreviewEnteredWindowFullscreen) return;
+        for (NSView *sub in [host.subviews copy]) {
+            if (![sub isKindOfClass:[NuvioPreviewContainerView class]]) continue;
+            NuvioPreviewContainerView *c = (NuvioPreviewContainerView *)sub;
+            if (!c.fullWindow) continue;
+            gPreviewEnteredWindowFullscreen = NO;
+            c.fullWindow = NO;
+            c.autoresizingMask = NSViewNotSizable;
+            [c.player sendPlayerEvent:@"previewExitFullscreen" value:1.0];
+            break;
+        }
+    }];
+}
+
+// In-place fullscreen of the preview: the container covers the whole content view (and follows it
+// through the macOS fullscreen transition); the mpv core and its stream are untouched.
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setPreviewFullWindow(
+    JNIEnv * /* env */,
+    jobject /* bridge */,
+    jlong hostViewPtr,
+    jboolean full,
+    jdouble x, jdouble y, jdouble w, jdouble h
+) {
+    NSView *hostView = (__bridge NSView *)(void *)(intptr_t)hostViewPtr;
+    if (!hostView) return;
+    BOOL wantFull = full == JNI_TRUE;
+    NSRect awtFrame = NSMakeRect(x, y, w, h);
+    runOnMainAsync(^{
+        for (NSView *sub in [hostView.subviews copy]) {
+            if (![sub isKindOfClass:[NuvioPreviewContainerView class]]) continue;
+            NuvioPreviewContainerView *c = (NuvioPreviewContainerView *)sub;
+            c.fullWindow = wantFull;
+            if (wantFull) {
+                c.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+                c.frame = hostView.bounds;
+            } else {
+                c.autoresizingMask = NSViewNotSizable;
+                c.frame = previewFrameInContentView(hostView, awtFrame);
+            }
+        }
+        if (wantFull) registerPreviewFullscreenObservers(hostView);
+        NSWindow *window = hostView.window;
+        if (!window) return;
+        BOOL isFs = (window.styleMask & NSWindowStyleMaskFullScreen) != 0;
+        if (wantFull && !isFs) {
+            gPreviewEnteredWindowFullscreen = YES;
+            [window toggleFullScreen:nil];
+        } else if (!wantFull) {
+            if (gPreviewEnteredWindowFullscreen && isFs) [window toggleFullScreen:nil];
+            gPreviewEnteredWindowFullscreen = NO;
+        }
+    });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_loadPreviewUrl(
+    JNIEnv *env,
+    jobject /* bridge */,
+    jlong handle,
+    jstring url
+) {
+    if (handle == 0 || !url) return;
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    NSString *nsUrl = [NSString stringWithUTF8String:jstringToString(env, url).c_str()];
+    [player loadPreviewUrl:nsUrl];
+}
+
+static jlong createPlayerImpl(
+    JNIEnv *env,
+    jlong hostViewPtr,
+    jstring sourceUrl,
+    jobjectArray headerLines,
+    jboolean playWhenReady,
+    jlong initialPositionMs,
+    jstring controlsPageUrl,
+    jint decoderPriority,
+    jobject eventSink,
+    BOOL previewMode,
+    NSRect previewFrame
 ) {
     NSView *hostView = (__bridge NSView *)(void *)(intptr_t)hostViewPtr;
     if (!hostView) {
@@ -3256,7 +3522,7 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
     }
 
     std::string source = jstringToString(env, sourceUrl);
-    std::string controls = jstringToString(env, controlsPageUrl);
+    std::string controls = controlsPageUrl ? jstringToString(env, controlsPageUrl) : std::string();
     NSArray<NSString *> *headers = jstringArrayToNSArray(env, headerLines);
     __block MpvWebPlayer *player = nil;
     __block NSString *error = nil;
@@ -3272,7 +3538,9 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
                  decoderPriority:decoderPriority
                           javaVm:javaVm
                        eventSink:eventSinkRef
-                     eventMethod:eventMethod];
+                     eventMethod:eventMethod
+                     previewMode:previewMode
+                    previewFrame:previewFrame];
         } @catch (NSException *exception) {
             error = exception.reason ?: exception.name;
         }
