@@ -25,6 +25,8 @@ import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.player.desktop.NativePlayerBridge
 import com.nuvio.app.features.player.desktop.NativePlayerController
+import com.nuvio.app.features.player.desktop.NativePlayerEventSink
+import com.nuvio.app.features.player.desktop.NativePlayerHandoff
 import com.nuvio.app.features.player.desktop.AwtNativeViewResolver
 import com.nuvio.app.features.player.desktop.DesktopHostOs
 import com.nuvio.app.features.player.desktop.NativePlayerHost
@@ -58,12 +60,10 @@ internal actual fun IptvPreviewSurface(url: String?, modifier: Modifier, gate: I
     // host box (createPreview, no controls web view, no first-responder grab). Other OSes embed a
     // real child window and keep the shared create.
     val controller = remember(host) {
-        NativePlayerController(host, nativeLoadUrl = if (isMac) NativePlayerBridge::loadPreviewUrl else null, nativeCreate = { hostView, source, headers, playWhenReady, positionMs, _, decoder, rtx, rtxHdr, sink ->
+        NativePlayerController(host, acceptHandoff = false, nativeLoadUrl = if (isMac) NativePlayerBridge::loadPreviewUrl else null, nativeCreate = { hostView, source, headers, playWhenReady, positionMs, _, decoder, rtx, rtxHdr, sink ->
             NativePlayerBridge.ensureLoaded()
             if (isMac) {
-                NativePlayerBridge.createPreview(
-                    hostView, source, headers, playWhenReady, positionMs, NativePlayerBridge.controlsPageUrl, decoder,
-                    { type, value ->
+                val previewSink = NativePlayerEventSink { type, value ->
                         when (type) {
                             "cursorActivity", "keepChromeVisible" -> controlsVisible = true
                             "hideChrome" -> controlsVisible = false
@@ -76,7 +76,20 @@ internal actual fun IptvPreviewSurface(url: String?, modifier: Modifier, gate: I
                             }
                             else -> sink.onPlayerEvent(type, value)
                         }
-                    },
+                    }
+                // Returning from the full player: its core is waiting in the handoff slot; take it back (no reconnect).
+                val returned = NativePlayerHandoff.take(source)?.let { taken ->
+                    runCatching {
+                        NativePlayerBridge.demoteToPreview(taken, hostView, previewSink, frame.x, frame.y, frame.w, frame.h, false)
+                        NativePlayerBridge.setPaused(taken, false)
+                    }.fold(
+                        onSuccess = { taken },
+                        onFailure = { runCatching { NativePlayerBridge.dispose(taken) }; null },
+                    )
+                }
+                returned ?: NativePlayerBridge.createPreview(
+                    hostView, source, headers, playWhenReady, positionMs, NativePlayerBridge.controlsPageUrl, decoder,
+                    previewSink,
                     frame.x, frame.y, frame.w, frame.h,
                 )
             } else {
@@ -138,9 +151,11 @@ internal actual fun IptvPreviewSurface(url: String?, modifier: Modifier, gate: I
 
     DisposableEffect(controller) {
         // After release the controller is unusable by design; the screen removes this composable.
+        gate.handOff = { url -> isMac && controller.detachForHandoff(url) }
         gate.release = { done -> controller.releaseBeforeNavigation(onReleased = done, onReleaseFailed = { done() }) }
         onDispose {
             gate.release = null
+            gate.handOff = null
             // Hide immediately even if native teardown is async.
             if (hostViewPtr != 0L) runCatching { NativePlayerBridge.setPreviewHidden(hostViewPtr, true) }
             controller.dispose()

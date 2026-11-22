@@ -64,12 +64,18 @@ internal class NativePlayerController(
     /** Preview only: switch the live core to another URL in place (null = always recreate). */
     private val nativeLoadUrl: ((Long, String) -> Unit)? = null,
     private val nativeDispose: (Long) -> Unit = NativePlayerBridge::dispose,
+    private val nativePromote: (Long, Long, NativePlayerEventSink?) -> Unit = NativePlayerBridge::promotePreviewToFull,
+    private val nativeDemote: (Long, Long) -> Unit = { handle, hostView ->
+        NativePlayerBridge.demoteToPreview(handle, hostView, null, 0.0, 0.0, 1.0, 1.0, true)
+    },
     private val nativeSeekTo: (Long, Long) -> Unit = NativePlayerBridge::seekTo,
     private val isHostDisplayable: () -> Boolean = { host.isDisplayable },
     private val resolveHostView: () -> Long = { AwtNativeViewResolver.resolveNativeViewPointer(host) },
     private val createWaitTimeoutMs: Long = 5_000L,
     private val releaseTimeoutMs: Long = 10_000L,
     private val onCreateWaitCompleted: () -> Unit = {},
+    /** False for the IPTV preview controller: it takes returned handles itself (demote), never promotes them. */
+    private val acceptHandoff: Boolean = true,
 ) : PlayerEngineController {
     private companion object {
         val json = Json { ignoreUnknownKeys = true }
@@ -98,6 +104,16 @@ internal class NativePlayerController(
     @Volatile
     private var handle: Long = 0L
     private var handleDecoderPriority: Int = -1
+
+    /** Source the live [handle] is playing (set on create/loadfile); lets [detachForHandoff] verify it. */
+    @Volatile
+    private var handleSourceUrl: String? = null
+
+    /** The live handle was adopted from the IPTV preview: on release it goes back to the preview instead of dying. */
+    @Volatile
+    private var handleAdopted = false
+    @Volatile
+    private var handleHostViewPtr = 0L
 
     /** Native teardown of the previous player, if one is still running. */
     @Volatile
@@ -203,7 +219,10 @@ internal class NativePlayerController(
                 pending.decoderPriority == handleDecoderPriority && !pending.sourceUrl.startsWith("file:", ignoreCase = true)
             ) {
                 // Same mpv core, loadfile replace: the old stream is closed by mpv before the new one opens.
-                if (runCatching { loadUrl(live, pending.sourceUrl) }.isSuccess) return@invokeLater
+                if (runCatching { loadUrl(live, pending.sourceUrl) }.isSuccess) {
+                    handleSourceUrl = pending.sourceUrl
+                    return@invokeLater
+                }
             }
             disposePlayerHandle()
             val teardown = disposeInFlight
@@ -321,10 +340,22 @@ internal class NativePlayerController(
         // messages. Creating on the EDT is therefore the same circular wait that the teardown had:
         // the app stops responding and Windows closes it as "stopped interacting" (Hang 1002).
         // Create off the EDT and come back to it for the parts that touch Swing state.
+        var wasAdopted = false
         val createWorker = Thread({
             try {
                 runCatching {
-                    nativeCreate(
+                    // Handed-over live preview of this very url: adopt it (no reconnect, initialPositionMs ignored).
+                    val adopted = if (acceptHandoff && pending.headerLines.isEmpty()) {
+                        NativePlayerHandoff.take(pending.sourceUrl)?.let { taken ->
+                            runCatching { nativePromote(taken, hostViewPtr, eventSink) }
+                                .onFailure { error ->
+                                    log.w(error) { "preview promotion failed, falling back to create" }
+                                    runCatching { nativeDispose(taken) }
+                                }
+                                .map { taken }.getOrNull()?.also { wasAdopted = true }
+                        }
+                    } else null
+                    adopted ?: nativeCreate(
                         hostViewPtr,
                         resolvedSource,
                         pending.headerLines.toTypedArray(),
@@ -341,6 +372,9 @@ internal class NativePlayerController(
                         if (!releaseRequested && terminalReleaseFailure == null && pendingSource === pending) {
                             handle = created
                             handleDecoderPriority = pending.decoderPriority
+                            handleSourceUrl = pending.sourceUrl
+                            handleAdopted = wasAdopted
+                            handleHostViewPtr = hostViewPtr
                             true
                         } else {
                             false
@@ -790,7 +824,7 @@ internal class NativePlayerController(
                     val current = if (failureMessage == null) detachPlayerHandle() else 0L
                     if (current != 0L) {
                         log.d { "pre-navigation dispose started handle=$current" }
-                        runCatching { nativeDispose(current) }
+                        runCatching { disposeOrGiveBack(current) }
                             .onSuccess { log.d { "pre-navigation dispose completed handle=$current" } }
                             .onFailure { error ->
                                 failureMessage = "Native player shutdown failed. Quit Nuvio before removing the player."
@@ -861,6 +895,48 @@ internal class NativePlayerController(
             isDaemon = true
             start()
         }
+    }
+
+    /**
+     * Gives the live native player to [NativePlayerHandoff] when it is playing exactly [url]; this controller
+     * then owns nothing natively (later dispose/release are no-ops). False = nothing handed over.
+     */
+    fun detachForHandoff(url: String): Boolean {
+        val current = synchronized(lifecycleLock) {
+            if (releaseRequested || terminalReleaseFailure != null || handleSourceUrl != url) return false
+            val h = handle.takeIf { it != 0L } ?: return false
+            handle = 0L
+            handleSourceUrl = null
+            lastSentControlsStructureKey = null
+            pendingSource = null
+            h
+        }
+        host.onPeerReady = null
+        NativePlayerHandoff.offer(url, current)
+        // Go full-window right away so the switch is seamless; off the EDT (main-thread hop). Idempotent with
+        // the adopting controller's own promote, in whichever order they reach the main thread.
+        val hostViewPtr = runCatching { resolveHostView() }.getOrDefault(0L)
+        if (hostViewPtr != 0L) {
+            Thread({ runCatching { nativePromote(current, hostViewPtr, null) } }, "nuvio-player-promote")
+                .apply { isDaemon = true; start() }
+        }
+        return true
+    }
+
+    /** Release path of a handle: an adopted live preview is demoted (hidden) and offered back instead of disposed. */
+    private fun disposeOrGiveBack(current: Long) {
+        val url = handleSourceUrl
+        val hostView = handleHostViewPtr
+        if (handleAdopted && url != null && hostView != 0L) {
+            handleAdopted = false
+            val demoted = runCatching { nativeDemote(current, hostView) }
+                .onFailure { error -> log.w(error) { "give-back demote failed" } }.isSuccess
+            if (demoted) {
+                NativePlayerHandoff.offer(url, current)
+                return
+            }
+        }
+        nativeDispose(current)
     }
 
     fun dispose() {
@@ -959,7 +1035,7 @@ internal class NativePlayerController(
         disposeInFlight = Thread(
             {
                 awaitThreadCompletion(prior, "prior native teardown")
-                runCatching { nativeDispose(current) }
+                runCatching { disposeOrGiveBack(current) }
                     .onFailure { error -> recordTerminalDisposeFailure(error, "native", current) }
             },
             "nuvio-player-dispose",

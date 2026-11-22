@@ -141,6 +141,8 @@ static constexpr double kMaxVolumePercent = 200.0;
 - (void)requestFocus;
 - (void)beginWindowDrag;
 - (void)reparentSurfaceToHostView:(NSView *)hostView;
+- (BOOL)promotePreviewToHostView:(NSView *)hostView eventSink:(jobject)eventSink eventMethod:(jmethodID)eventMethod;
+- (BOOL)demoteToPreviewInHostView:(NSView *)hostView frame:(NSRect)awtFrame hidden:(BOOL)hidden eventSink:(jobject)eventSink eventMethod:(jmethodID)eventMethod;
 - (void)setPaused:(BOOL)paused;
 - (void)loadPreviewUrl:(NSString *)url;
 - (BOOL)isPaused;
@@ -1404,6 +1406,102 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     [_videoView updateMetalLayerLayout];
     [_videoView scheduleRenderUpdate];
     [self requestFocus];
+}
+
+// IPTV preview <-> full player handoff: the running mpv core (and its single provider connection) is kept;
+// only the views move between the preview container and the window content view, and the JVM sink is swapped.
+// All of these run on the main thread; a NULL sink keeps the current one; they are idempotent.
+
+- (void)swapEventSink:(jobject)eventSink eventMethod:(jmethodID)eventMethod {
+    jobject oldSink = _eventSink;
+    _eventSink = eventSink;
+    _eventMethod = eventMethod;
+    // The old global ref is released only after the drain queue (the one off-main sender) is idle.
+    if (_mpvDrainQueue) dispatch_sync(_mpvDrainQueue, ^{});
+    if (oldSink) {
+        BOOL didAttach = NO;
+        JNIEnv *env = [self jniEnvDidAttach:&didAttach];
+        if (env) env->DeleteGlobalRef(oldSink);
+        if (didAttach) _javaVm->DetachCurrentThread();
+    }
+}
+
+- (BOOL)promotePreviewToHostView:(NSView *)newHostView eventSink:(jobject)eventSink eventMethod:(jmethodID)eventMethod {
+    if (!_mpv || !_videoView || !_webView || !newHostView || !newHostView.window) return NO;
+    if (_previewMode) {
+        _previewMode = NO;
+        ((PlayerControlsWebView *)_webView).preview = NO;
+        _previewLoadAt.store(0.0);
+        NuvioPreviewContainerView *container = _previewContainer;
+        [self reparentSurfaceToHostView:newHostView]; // frame observers, z-order, layout reset, focus (now allowed)
+        container.player = nil;
+        [container removeFromSuperview];
+        _previewContainer = nil;
+        [self activateRemoteCommands];
+        [_webView evaluateJavaScript:@"document.documentElement.classList.remove('preview')" completionHandler:nil];
+        [self syncControls];
+    } else if (_hostView != newHostView) {
+        [self reparentSurfaceToHostView:newHostView];
+    }
+    if (eventSink) [self swapEventSink:eventSink eventMethod:eventMethod];
+    return YES;
+}
+
+- (BOOL)demoteToPreviewInHostView:(NSView *)contentView frame:(NSRect)awtFrame hidden:(BOOL)hidden
+                        eventSink:(jobject)eventSink eventMethod:(jmethodID)eventMethod {
+    if (!_mpv || !_videoView || !_webView || !contentView || !contentView.window) return NO;
+    if (_previewMode) {
+        if (_previewContainer) {
+            _previewContainer.frame = previewFrameInContentView(contentView, awtFrame);
+            _previewContainer.hidden = hidden;
+        }
+    } else {
+        [self endWindowTracking];
+        NSWindow *window = contentView.window;
+        NSView *oldHostView = _hostView;
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:NSViewFrameDidChangeNotification object:oldHostView];
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:NSViewBoundsDidChangeNotification object:oldHostView];
+        NuvioPreviewContainerView *container = [[NuvioPreviewContainerView alloc]
+            initWithFrame:previewFrameInContentView(contentView, awtFrame)];
+        container.player = self;
+        container.wantsLayer = YES;
+        container.layer.masksToBounds = YES;
+        container.hidden = hidden;
+        [contentView addSubview:container];
+        [_videoView removeFromSuperview];
+        [_webView removeFromSuperview];
+        _previewContainer = container;
+        _hostView = container;
+        _hostView.layer.backgroundColor = NSColor.blackColor.CGColor;
+        [_hostView setPostsFrameChangedNotifications:YES];
+        [_hostView setPostsBoundsChangedNotifications:YES];
+        _videoView.frame = container.bounds;
+        [_hostView addSubview:_videoView];
+        _webView.frame = container.bounds;
+        [_hostView addSubview:_webView positioned:NSWindowAbove relativeTo:_videoView];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(hostViewFrameDidChange:)
+                                                     name:NSViewFrameDidChangeNotification object:_hostView];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(hostViewBoundsDidChange:)
+                                                     name:NSViewBoundsDidChangeNotification object:_hostView];
+        _previewMode = YES;
+        ((PlayerControlsWebView *)_webView).preview = YES;
+        _didFocusControlsWebView = NO;
+        _lastAppliedNativeLayoutBounds = NSZeroRect;
+        _lastAppliedNativeLayoutWasLiveResize = NO;
+        _lightweightResizeSettleUntil = 0.0;
+        [self deactivateRemoteCommands];
+        [_webView evaluateJavaScript:@"document.documentElement.classList.add('preview')" completionHandler:nil];
+        // Preview never owns keyboard focus: hand it back to the AWT view if the controls held it.
+        NSResponder *fr = window.firstResponder;
+        if ([fr isKindOfClass:[NSView class]] && [(NSView *)fr isDescendantOf:container]) {
+            [window makeFirstResponder:contentView];
+        }
+        [self layoutNativeSubviews];
+        [_videoView updateMetalLayerLayout];
+        [_videoView scheduleRenderUpdate];
+    }
+    if (eventSink) [self swapEventSink:eventSink eventMethod:eventMethod];
+    return YES;
 }
 
 - (void)layoutControlsWebViewToBounds:(NSRect)bounds immediate:(BOOL)immediate {
@@ -3488,6 +3586,85 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setPreviewFullWind
             gPreviewEnteredWindowFullscreen = NO;
         }
     });
+}
+
+// Shared by promote/demote: resolves the sink (null = keep current) to a global ref + method id.
+static BOOL resolveHandoffSink(JNIEnv *env, jobject eventSink, jobject *refOut, jmethodID *methodOut) {
+    *refOut = nullptr;
+    *methodOut = nullptr;
+    if (!eventSink) return YES;
+    jclass sinkClass = env->GetObjectClass(eventSink);
+    jmethodID m = env->GetMethodID(sinkClass, "onPlayerEvent", "(Ljava/lang/String;D)V");
+    env->DeleteLocalRef(sinkClass);
+    if (!m) {
+        throwJavaError(env, @"Native player event sink is missing onPlayerEvent(String, Double).");
+        return NO;
+    }
+    *refOut = env->NewGlobalRef(eventSink);
+    *methodOut = m;
+    return YES;
+}
+
+// Preview -> full in place (see promotePreviewToHostView). `handle` stays valid; null sink keeps the current one.
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_promotePreviewToFull(
+    JNIEnv *env, jobject /* bridge */, jlong handle, jlong hostViewPtr, jobject eventSink
+) {
+    NSView *hostView = (__bridge NSView *)(void *)(intptr_t)hostViewPtr;
+    if (handle == 0 || !hostView) {
+        throwJavaError(env, @"Invalid arguments for promotePreviewToFull.");
+        return;
+    }
+    jobject sinkRef; jmethodID method;
+    if (!resolveHandoffSink(env, eventSink, &sinkRef, &method)) return;
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    __block BOOL ok = NO;
+    runOnMainSync(^{
+        @try {
+            ok = [player promotePreviewToHostView:hostView eventSink:sinkRef eventMethod:method];
+        } @catch (NSException *) {
+            ok = NO;
+        }
+        if (ok) {
+            // The preview-fullscreen state belonged to the (now removed) container.
+            gPreviewEnteredWindowFullscreen = NO;
+        }
+    });
+    if (!ok) {
+        if (sinkRef) env->DeleteGlobalRef(sinkRef);
+        throwJavaError(env, @"Preview player could not be promoted.");
+    }
+}
+
+// Full -> preview in place (see demoteToPreviewInHostView); `hidden` keeps the container invisible until
+// the IPTV surface shows it. Idempotent for an already-preview player (re-frames it).
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_demoteToPreview(
+    JNIEnv *env, jobject /* bridge */, jlong handle, jlong hostViewPtr, jobject eventSink,
+    jdouble x, jdouble y, jdouble w, jdouble h, jboolean hidden
+) {
+    NSView *hostView = (__bridge NSView *)(void *)(intptr_t)hostViewPtr;
+    if (handle == 0 || !hostView) {
+        throwJavaError(env, @"Invalid arguments for demoteToPreview.");
+        return;
+    }
+    jobject sinkRef; jmethodID method;
+    if (!resolveHandoffSink(env, eventSink, &sinkRef, &method)) return;
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    NSRect frame = NSMakeRect(x, y, w, h);
+    __block BOOL ok = NO;
+    runOnMainSync(^{
+        @try {
+            ok = [player demoteToPreviewInHostView:hostView frame:frame hidden:hidden == JNI_TRUE
+                                         eventSink:sinkRef eventMethod:method];
+        } @catch (NSException *) {
+            ok = NO;
+        }
+    });
+    if (!ok) {
+        if (sinkRef) env->DeleteGlobalRef(sinkRef);
+        throwJavaError(env, @"Player could not be demoted to preview.");
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL

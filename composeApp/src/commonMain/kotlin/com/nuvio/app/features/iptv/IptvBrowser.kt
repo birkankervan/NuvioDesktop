@@ -85,7 +85,7 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
     // Back from the full player: give the server ~0.8s to release the old connection, then the preview may restart.
     LaunchedEffect(Unit) {
         runCatching { focus.requestFocus() }
-        if (st.previewSuspended) { delay(800L); st.previewSuspended = false } // VOD path only
+        if (st.previewSuspended) { if (!st.previewGate.handedOff) delay(800L); st.previewGate.handedOff = false; st.previewSuspended = false } // VOD path only
     }
     LaunchedEffect(mode) {
         if (st.categories[mode] != null) return@LaunchedEffect
@@ -144,9 +144,11 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
     }
     val listState = categoryId?.let { st.itemScroll(mode, it) } ?: remember { LazyListState() }
 
-    fun open(title: String, url: String) {
+    fun open(title: String, url: String, live: Boolean = false) {
         if (opening) return
         opening = true
+        // Live preview playing this url: the full player adopts the running core instead of reconnecting.
+        if (live && st.previewGate.handOff?.invoke(url) == true) { st.previewGate.handedOff = true; st.previewSuspended = true; onPlay(title, url); return }
         // Full player; any preview must be fully released first (max_connections=1). Series has no preview mounted.
         val go = { st.previewSuspended = true; onPlay(title, url) }
         val release = st.previewGate.release
@@ -155,7 +157,7 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
 
     fun play(item: IptvItem) {
         st.selected[mode] = item
-        open(item.name, item.url)
+        open(item.name, item.url, live = mode == IptvMode.LIVE)
     }
 
     fun playEpisode(i: Int) {

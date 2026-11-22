@@ -19,6 +19,12 @@ internal class IptvPreviewGate {
 
     var release: ((onDone: () -> Unit) -> Unit)? = null
 
+    /** Hands the running native preview to the full player when it plays exactly this url (desktop macOS); true = handed over. */
+    var handOff: ((String) -> Boolean)? = null
+
+    /** Set when the full player took the live core over; Back then returns it, so the 800 ms connection wait is skipped. */
+    var handedOff = false
+
     /** Double-click on the preview video (delivered by the native view, which swallows mouse events). */
     var onDoubleClick: () -> Unit = {}
 }
