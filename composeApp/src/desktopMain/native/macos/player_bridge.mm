@@ -2023,6 +2023,11 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
             NSString *mediaTitle = [self stringProperty:"media-title" fallback:@""];
             NSString *gamma = [[self stringProperty:"video-params/gamma" fallback:@""] lowercaseString];
             NSString *primaries = [[self stringProperty:"video-params/primaries" fallback:@""] lowercaseString];
+            int videoW = (int)[self doubleProperty:"video-params/w" fallback:0.0];
+            int videoH = (int)[self doubleProperty:"video-params/h" fallback:0.0];
+            NSString *resolution = (videoW <= 0 && videoH <= 0) ? @""
+                : (videoW >= 3800 || videoH >= 2100) ? @"4K"
+                : [NSString stringWithFormat:@"%dp", videoH];
             [self updateCachedDuration:duration
                               position:position
                         positionReadAt:positionReadAt
@@ -2045,7 +2050,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
                                          paused:paused
                                           speed:speed];
                 NSString *script = [NSString stringWithFormat:
-                    @"window.playerUpdate({duration:%0.3f,position:%0.3f,bufferedPosition:%0.3f,volumeLevel:%0.3f,paused:%@,loading:%@,audioTracks:%@,subtitleTracks:%@})",
+                    @"window.playerUpdate({duration:%0.3f,position:%0.3f,bufferedPosition:%0.3f,volumeLevel:%0.3f,paused:%@,loading:%@,audioTracks:%@,subtitleTracks:%@,resolution:\"%@\"})",
                     duration,
                     position,
                     bufferedPosition,
@@ -2053,7 +2058,8 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
                     paused ? @"true" : @"false",
                     loading ? @"true" : @"false",
                     audioTracks,
-                    subtitleTracks];
+                    subtitleTracks,
+                    resolution];
                 [self->_webView evaluateJavaScript:script completionHandler:nil];
             });
         }

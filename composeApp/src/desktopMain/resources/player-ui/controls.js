@@ -3,6 +3,7 @@ const seek = document.getElementById("seek");
 const positionLabel = document.getElementById("position");
 const durationLabel = document.getElementById("duration");
 const timeLabel = document.getElementById("timeLabel");
+const resolutionLabel = document.getElementById("resolutionLabel");
 const volumeControl = document.getElementById("volumeControl");
 const volumeButton = document.getElementById("volumeButton");
 const volumeIcon = document.getElementById("volumeIcon");
@@ -3691,6 +3692,11 @@ window.playerUpdate = update => {
   const subtitleTracks = normalizeTracks(update.subtitleTracks);
   const audioTracksChanged = trackListSignature(audioTracks) !== trackListSignature(state.audioTracks);
   const subtitleTracksChanged = trackListSignature(subtitleTracks) !== trackListSignature(state.subtitleTracks);
+  const resolution = typeof update.resolution === "string" ? update.resolution : "";
+  if (resolutionLabel && resolutionLabel.textContent !== resolution) {
+    resolutionLabel.textContent = resolution;
+    resolutionLabel.hidden = !resolution;
+  }
   const nativeIsPlaying = !Boolean(update.paused);
   lastNativeIsPlaying = nativeIsPlaying;
   if (pendingIsPlaying !== null && nativeIsPlaying === pendingIsPlaying) {

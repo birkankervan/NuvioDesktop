@@ -1892,6 +1892,21 @@ button:disabled {
   box-shadow: 0 0 0 3px var(--theme-focus);
 }
 
+.resolution-label {
+  flex: 0 0 auto;
+  color: var(--theme-control-foreground);
+  opacity: .7;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 500;
+  white-space: nowrap;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, .7);
+}
+
+.resolution-label[hidden] {
+  display: none;
+}
+
 .time-label {
   flex: 0 0 auto;
   color: var(--theme-control-foreground);
@@ -2058,7 +2073,8 @@ button:disabled {
     transform: translateZ(0) scale(.96);
   }
 
-  .time-label {
+  .time-label,
+  .resolution-label {
     font-size: 18px;
   }
 }
@@ -3875,6 +3891,7 @@ html.preview .header-button svg {
 html.preview:not([data-has-subs]) .action[data-command="subtitles"],
 html.preview:not([data-multi-audio]) .action[data-command="audio"],
 html.preview:not([data-has-duration]) .scrub,
+html.preview:not([data-has-duration]) .resolution-label,
 html.preview:not([data-has-duration]) .time-label {
   display: none !important;
 }
@@ -3900,6 +3917,11 @@ html.preview .scrub::-webkit-slider-runnable-track {
 html.preview .action-row {
   margin-top: 0;
   min-height: 32px;
+}
+
+html.preview .resolution-label {
+  margin-left: 6px;
+  font-size: 10px;
 }
 
 html.preview .time-label {
