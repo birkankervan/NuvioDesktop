@@ -57,6 +57,19 @@ internal fun IptvPreviewPanel(
             Text(item.name, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
             categoryName?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Button(onOpen) { Text("Oynat") }
+            LaunchedEffect(item.id) {
+                if (IptvUiState.vodInfos[item.id] == null) {
+                    runCatching { client.vodInfo(item.id) }.onSuccess { IptvUiState.vodInfos[item.id] = it } // silent on error
+                }
+            }
+            val info = IptvUiState.vodInfos[item.id]
+            (info?.rating ?: item.rating)?.let {
+                Text("★ $it", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            }
+            info?.plot?.let {
+                Text(it, maxLines = 8, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             return@Column
         }
 

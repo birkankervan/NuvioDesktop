@@ -29,7 +29,10 @@ internal data class IptvItem(
     val url: String,
     val num: Int? = null,
     val categoryId: String? = null,
+    val rating: String? = null,
 )
+
+internal data class IptvVodInfo(val plot: String?, val rating: String?)
 
 internal data class IptvSeries(
     val id: String,
@@ -114,6 +117,9 @@ internal class XtreamClient(private val account: IptvAccount) {
     suspend fun seriesInfo(seriesId: String): IptvSeriesInfo =
         parseSeriesInfo(call("get_series_info", extra = mapOf("series_id" to seriesId)), account)
 
+    suspend fun vodInfo(vodId: String): IptvVodInfo =
+        parseVodInfo(call("get_vod_info", extra = mapOf("vod_id" to vodId)))
+
     suspend fun items(vod: Boolean, categoryId: String): List<IptvItem> =
         (call(if (vod) "get_vod_streams" else "get_live_streams", categoryId) as? JsonArray).orEmpty()
             .mapNotNull { it as? JsonObject }
@@ -127,7 +133,7 @@ internal class XtreamClient(private val account: IptvAccount) {
                     "${account.server}/live/${enc(account.username)}/${enc(account.password)}/$id.m3u8"
                 }
                 IptvItem(id, name, (o.str("stream_icon") ?: o.str("cover"))?.takeIf { it.startsWith("http", ignoreCase = true) }, url,
-                    o.str("num")?.toIntOrNull(), categoryId)
+                    o.str("num")?.toIntOrNull(), categoryId, if (vod) cleanRating(o.str("rating")) else null)
             }
             .distinctBy { it.id }
 
@@ -150,6 +156,17 @@ internal class XtreamClient(private val account: IptvAccount) {
 
 private fun JsonObject.str(key: String): String? =
     (get(key) as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+
+/** Providers send "0", "0.0" or "" for unrated. */
+internal fun cleanRating(r: String?): String? = r?.takeIf { (it.toDoubleOrNull() ?: 0.0) > 0.0 }
+
+internal fun parseVodInfo(root: JsonElement): IptvVodInfo {
+    val info = (root as? JsonObject)?.get("info") as? JsonObject
+    return IptvVodInfo(
+        plot = info?.let { it.str("plot") ?: it.str("description") },
+        rating = cleanRating(info?.str("rating")),
+    )
+}
 
 internal fun parseSeriesList(root: JsonElement, categoryId: String?): List<IptvSeries> =
     (root as? JsonArray).orEmpty()

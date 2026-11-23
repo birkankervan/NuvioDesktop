@@ -38,6 +38,7 @@ internal object IptvUiState {
     // Series: list per category id, seriesInfo per series id (process-lifetime caches).
     val seriesList = mutableStateMapOf<String, List<IptvSeries>>()
     val seriesInfos = mutableStateMapOf<String, IptvSeriesInfo>()
+    val vodInfos = mutableStateMapOf<String, IptvVodInfo>()
     val seasonBySeries = mutableStateMapOf<String, Int>()
     var episodeIndex by mutableStateOf(0)
     /** True while keyboard focus is in the episode list instead of the series list. */
@@ -72,7 +73,7 @@ internal object IptvUiState {
         client?.close(); client = null; clientAccount = null
         account = null; query = ""; previewSuspended = false; mode = IptvMode.LIVE
         categoryIds.clear(); selected.clear(); categories.clear(); items.clear()
-        seriesList.clear(); seriesInfos.clear(); seasonBySeries.clear(); episodeIndex = 0; episodePane = false
+        seriesList.clear(); seriesInfos.clear(); vodInfos.clear(); seasonBySeries.clear(); episodeIndex = 0; episodePane = false
         categoryScroll.clear(); itemScroll.clear(); episodeScroll.clear()
     }
 }

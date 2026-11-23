@@ -60,4 +60,14 @@ class XtreamSeriesParseTest {
         assertNull(l[0].cover)
         assertEquals("9", l[0].categoryId)
     }
+
+    @Test
+    fun vodInfo() {
+        fun vod(s: String) = parseVodInfo(Json.parseToJsonElement(s))
+        assertEquals(IptvVodInfo("A plot", "7.4"), vod("""{"info":{"plot":"A plot","rating":"7.4"}}"""))
+        assertEquals("Desc", vod("""{"info":{"description":"Desc","rating":8}}""").plot)
+        assertEquals("8", vod("""{"info":{"rating":8}}""").rating)
+        assertEquals(IptvVodInfo(null, null), vod("""{"info":{"plot":"null","rating":"0.0"}}"""))
+        assertEquals(IptvVodInfo(null, null), vod("[]"))
+    }
 }
