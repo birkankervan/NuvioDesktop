@@ -62,6 +62,59 @@ internal object NativePlayerBridge {
         eventSink: NativePlayerEventSink,
     ): Long
 
+    /**
+     * macOS only: like [create] (controls HUD included, never first responder), confined to a child container at
+     * the given frame (AWT window coordinates, points). It never takes keyboard focus and forwards
+     * "previewDoubleClick" through [eventSink].
+     */
+    external fun createPreview(
+        hostViewPtr: Long,
+        sourceUrl: String,
+        headerLines: Array<String>,
+        playWhenReady: Boolean,
+        initialPositionMs: Long,
+        controlsPageUrl: String,
+        decoderPriority: Int,
+        eventSink: NativePlayerEventSink,
+        x: Double,
+        y: Double,
+        width: Double,
+        height: Double,
+    ): Long
+
+    /**
+     * macOS only: turns a running [createPreview] player into a full player in place (same mpv core, no reconnect):
+     * views move into [hostViewPtr], preview-only state is dropped and [eventSink] replaces the old one.
+     * Throws (handle untouched, still owned by the caller) when it cannot.
+     * Idempotent: on an already-promoted player it only swaps the sink (null keeps the current one).
+     */
+    external fun promotePreviewToFull(handle: Long, hostViewPtr: Long, eventSink: NativePlayerEventSink?)
+
+    /**
+     * macOS only, reverse of [promotePreviewToFull]: moves a full player's views into a preview container at the
+     * given frame (hidden until the IPTV surface shows it), without stopping the core. Null sink keeps the current one.
+     */
+    external fun demoteToPreview(
+        handle: Long,
+        hostViewPtr: Long,
+        eventSink: NativePlayerEventSink?,
+        x: Double,
+        y: Double,
+        width: Double,
+        height: Double,
+        hidden: Boolean,
+    )
+
+    /** macOS only: switches the preview core to [url] via loadfile replace (no player re-creation). */
+    external fun loadPreviewUrl(handle: Long, url: String)
+
+    /** macOS only: in-place fullscreen of the preview container (+ window fullscreen if needed); the x/y/w/h frame is restored on exit. */
+    external fun setPreviewFullWindow(hostViewPtr: Long, full: Boolean, x: Double, y: Double, width: Double, height: Double)
+
+    /** macOS only: moves the preview container created by [createPreview]. */
+    external fun setPreviewFrame(hostViewPtr: Long, x: Double, y: Double, width: Double, height: Double)
+    external fun setPreviewHidden(hostViewPtr: Long, hidden: Boolean)
+
     external fun dispose(handle: Long)
     external fun updateControls(handle: Long, controlsJson: String)
 

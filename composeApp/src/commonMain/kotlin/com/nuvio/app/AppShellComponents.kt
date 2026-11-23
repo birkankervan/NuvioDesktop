@@ -1,5 +1,6 @@
 package com.nuvio.app
 
+import com.nuvio.app.features.iptv.IptvScreen
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -35,6 +36,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -179,6 +181,7 @@ internal data class AppTabActions(
     val onCloudFilePlay: ((CloudLibraryItem, CloudLibraryFile) -> Unit)? = null,
     val onConnectCloudClick: (() -> Unit)? = null,
     val onDownloadsClick: () -> Unit = {},
+    val onIptvPlay: (title: String, url: String) -> Unit = { _, _ -> },
     val onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     val onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
     val onSwitchProfile: (() -> Unit)? = null,
@@ -291,6 +294,14 @@ internal fun AppTabHost(
                     onPreviewLongClick = actions.onPosterLongClick,
                     onDownloadsClick = actions.onDownloadsClick,
                     disintegrationRequest = state.libraryDisintegrationRequest,
+                )
+            }
+
+            AppScreenTab.Iptv -> {
+                IptvScreen(
+                    topChromePadding = state.topChromePadding,
+                    onPlay = actions.onIptvPlay,
+                    modifier = contentModifier,
                 )
             }
 
@@ -871,6 +882,20 @@ internal fun DesktopHoverSidebar(
                     Icon(
                         painter = painterResource(Res.drawable.sidebar_library),
                         contentDescription = stringResource(Res.string.compose_nav_library),
+                        modifier = Modifier.size(DesktopSidebarIconSize),
+                        tint = color,
+                    )
+                }
+                DesktopSidebarItem(
+                    id = "sidebar_iptv",
+                    label = "IPTV",
+                    selected = selectedTab == AppScreenTab.Iptv,
+                    expanded = sidebarExpanded,
+                    onClick = { selectTab(AppScreenTab.Iptv) },
+                ) { color ->
+                    Icon(
+                        imageVector = Icons.Filled.PlayArrow,
+                        contentDescription = "IPTV",
                         modifier = Modifier.size(DesktopSidebarIconSize),
                         tint = color,
                     )

@@ -272,6 +272,8 @@ data class PlayerControlsState(
     val showSubmitIntro: Boolean = false,
     val showVideoSettings: Boolean = false,
     val showSources: Boolean = false,
+    /** Sources panel lists IPTV live channels: the HUD shows a TV icon. */
+    val sourcesAreChannels: Boolean = false,
     val showEpisodes: Boolean = false,
     val showExternalPlayer: Boolean = false,
     val durationMs: Long = 0L,

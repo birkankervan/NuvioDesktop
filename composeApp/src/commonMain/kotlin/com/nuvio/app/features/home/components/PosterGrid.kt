@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -22,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -145,7 +147,7 @@ private fun PosterGridTile(
                         hoverScaleEnabled = false,
                     ),
             ) {
-                if (item.poster != null) {
+                if (!item.poster.isNullOrBlank()) {
                     val platformContext = coil3.compose.LocalPlatformContext.current
                     val hasFallback = !item.rawPosterUrl.isNullOrBlank() && item.rawPosterUrl != item.poster
                     val imageModel = remember(item.poster, item.rawPosterUrl, platformContext) {
@@ -176,6 +178,16 @@ private fun PosterGridTile(
                             contentScale = ContentScale.Crop,
                         )
                     }
+                } else {
+                    Text(
+                        text = item.name,
+                        modifier = Modifier.align(Alignment.Center).padding(horizontal = 14.dp),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 NuvioPosterWatchedOverlay(isWatched = isWatched)
             }

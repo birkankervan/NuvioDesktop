@@ -1,5 +1,10 @@
 package com.nuvio.app
 
+import com.nuvio.app.features.iptv.IPTV_META_PREFIX
+import com.nuvio.app.features.iptv.IptvPlaybackProgress
+import com.nuvio.app.features.iptv.IptvPlayerChannels
+import com.nuvio.app.features.iptv.iptvKeyFor
+import com.nuvio.app.features.iptv.iptvResumePositionMs
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.MutableTransitionState
@@ -442,6 +447,7 @@ internal fun MainAppContent(
                 searchScrollToTopRequests.tryEmit(Unit)
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
+            AppScreenTab.Iptv -> Unit
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
         }
     }
@@ -1541,6 +1547,23 @@ internal fun MainAppContent(
                                     }
                                 },
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
+                                onIptvPlay = { title, url ->
+                                    val iptvId = iptvKeyFor(url)
+                                    val launchId = PlayerLaunchStore.put(
+                                        PlayerLaunch(
+                                            profileId = activePlaybackProfileId,
+                                            title = title,
+                                            sourceUrl = url,
+                                            streamTitle = title,
+                                            providerName = "IPTV",
+                                            videoId = iptvId,
+                                            parentMetaId = iptvId,
+                                            parentMetaType = "tv",
+                                            initialPositionMs = if (IptvPlayerChannels.isLive) 0L else iptvResumePositionMs(IptvPlaybackProgress.progress.value[iptvId]) ?: 0L,
+                                        ),
+                                    )
+                                    navController.navigate(PlayerRoute(launchId = launchId, title = title))
+                                },
                                 onContinueWatchingClick = onContinueWatchingClick,
                                 onContinueWatchingLongPress = onContinueWatchingLongPress,
                                 onSwitchProfile = onSwitchProfile,

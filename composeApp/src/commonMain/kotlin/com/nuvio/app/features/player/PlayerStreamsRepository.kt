@@ -1,5 +1,6 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.features.iptv.isIptvMetaId
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.addons.AddonRepository
@@ -184,6 +185,7 @@ object PlayerStreamsRepository {
         jobHolder: () -> Job?,
         setJob: (Job) -> Unit,
     ) {
+        if (isIptvMetaId(videoId)) return
         val pluginUiState = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.initialize()
             PluginRepository.uiState.value

@@ -3,6 +3,7 @@ const seek = document.getElementById("seek");
 const positionLabel = document.getElementById("position");
 const durationLabel = document.getElementById("duration");
 const timeLabel = document.getElementById("timeLabel");
+const resolutionLabel = document.getElementById("resolutionLabel");
 const volumeControl = document.getElementById("volumeControl");
 const volumeButton = document.getElementById("volumeButton");
 const volumeIcon = document.getElementById("volumeIcon");
@@ -1100,6 +1101,7 @@ const setModalVisibility = (modal, visible, animated = true) => {
 const closePlayerModal = (notifyDismiss = false, animated = true) => {
   const closingModal = activeModal;
   activeModal = "";
+  endSourceCenter();
   if (fontPickerOpen) setFontPickerOpen(false);
   modalElements.forEach(modal => {
     setModalVisibility(modal, false, animated);
@@ -1610,7 +1612,39 @@ const setFontPickerOpen = open => {
   setModalVisibility(subtitleFontModal, open);
 };
 
+// IPTV preview: Kotlin supplies no subtitle option/language items, so list mpv's tracks directly.
+const renderPreviewSubtitleList = () => {
+  subtitlePanelTitle.textContent = state.subtitlesPanelTitle || "Subtitles";
+  subtitleTrackList.textContent = "";
+  const tracks = normalizeTracks(state.subtitleTracks);
+  const rows = [{ label: "Off", id: -1, selected: !tracks.some(track => track.selected) }].concat(tracks.map(track => ({
+    label: track.label || displayLanguageName(track.language) || `Track ${Number(track.index || 0) + 1}`,
+    id: trackIdValue(track),
+    selected: Boolean(track.selected),
+  })));
+  rows.forEach(item => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `track-row${item.selected ? " selected" : ""}`;
+    row.addEventListener("click", event => {
+      event.stopPropagation();
+      send("selectSubtitleTrack", item.id);
+      window.setTimeout(closePlayerModal, 120);
+    });
+    const label = document.createElement("span");
+    label.className = "track-label";
+    label.textContent = item.label;
+    row.appendChild(label);
+    row.appendChild(buildCheckIcon());
+    subtitleTrackList.appendChild(row);
+  });
+};
+
 const renderSubtitleModal = () => {
+  if (document.documentElement.classList.contains("preview")) {
+    renderPreviewSubtitleList();
+    return;
+  }
   subtitlePanelTitle.textContent = state.subtitlesPanelTitle || "Subtitles";
   subtitleLanguageRailTitle.textContent = state.subtitleLanguagesLabel || "Languages";
   subtitleOptionsRailTitle.textContent = state.subtitlesPanelTitle || "Subtitles";
@@ -1923,7 +1957,7 @@ const renderSourceVirtualRows = () => {
   window.requestAnimationFrame(() => {
     let changed = false;
     rendered.forEach(({ index, wrapper }) => {
-      const measured = Math.ceil(wrapper.getBoundingClientRect().height);
+      const measured = wrapper.offsetHeight; // not getBoundingClientRect: the panel's open transform scales it
       if (measured > 0 && Math.abs((sourceVirtualHeights[index] || SourceRowEstimatedHeight) - measured) > 1) {
         sourceVirtualHeights[index] = measured;
         changed = true;
@@ -1939,6 +1973,17 @@ const renderSourceVirtualRows = () => {
 const requestSourceVirtualRender = () => {
   if (sourceVirtualRenderRaf) return;
   sourceVirtualRenderRaf = window.requestAnimationFrame(renderSourceVirtualRows);
+};
+
+// Set when the Sources/Channels button opens the panel: the list stays hidden until the playing row is centered
+// (first render that contains it), with a safety reveal so it never stays hidden.
+let sourceCenterPending = false;
+let sourceCenterTimer = 0;
+const endSourceCenter = () => {
+  sourceCenterPending = false;
+  window.clearTimeout(sourceCenterTimer);
+  sourceList.style.visibility = "";
+  sourceList.style.scrollBehavior = "";
 };
 
 const renderSourceModal = (modalOpened = false) => {
@@ -1994,6 +2039,39 @@ const renderSourceModal = (modalOpened = false) => {
   sourceVirtualSpacer.className = "source-virtual-spacer";
   sourceList.appendChild(sourceVirtualSpacer);
   rebuildSourceVirtualLayout();
+  if (sourceCenterPending) {
+    // Open already centered: list stays hidden while rows near the current one are rendered and measured
+    // (offsetHeight, untouched by the panel's open transform), unmeasured rows take their average, then scroll.
+    const i = sourceVirtualItems.findIndex(item => item.isCurrent);
+    if (i >= 0) {
+      const center = () => {
+        const h = sourceVirtualHeights[i] || SourceRowEstimatedHeight;
+        sourceList.style.scrollBehavior = "auto";
+        sourceList.scrollTop = Math.max(0, sourceVirtualOffsets[i] - sourceList.clientHeight / 2 + h / 2);
+      };
+      const settle = () => {
+        center();
+        renderSourceVirtualRows();
+        const measuredIdx = new Set();
+        let sum = 0;
+        sourceVirtualSpacer.querySelectorAll(".source-virtual-row").forEach(wrapper => {
+          const m = /translateY\((-?[\d.]+)px\)/.exec(wrapper.style.transform);
+          const idx = m ? sourceVirtualOffsets.indexOf(Number(m[1])) : -1;
+          if (idx >= 0 && wrapper.offsetHeight > 0) { sourceVirtualHeights[idx] = wrapper.offsetHeight; measuredIdx.add(idx); sum += wrapper.offsetHeight; }
+        });
+        if (measuredIdx.size) {
+          const avg = Math.round(sum / measuredIdx.size);
+          sourceVirtualHeights = sourceVirtualHeights.map((h, idx) => measuredIdx.has(idx) ? h : avg);
+          rebuildSourceVirtualLayout();
+        }
+        center();
+        renderSourceVirtualRows();
+        endSourceCenter();
+      };
+      if (sourceList.clientHeight > 0) settle();
+      else window.requestAnimationFrame(settle);
+    }
+  }
   requestSourceVirtualRender();
 };
 
@@ -2770,6 +2848,11 @@ const renderChrome = () => {
   if (!state.isInPip && isPipLocked) setPipLocked(false);
   root.classList.toggle("chrome-hidden", Boolean(showError || !state.controlsVisible));
   root.classList.toggle("modal-open", Boolean(activeModal));
+  // Drives the IPTV preview bar (html.preview rules in controls.css); no effect elsewhere.
+  const dataset = document.documentElement.dataset;
+  dataset.hasDuration = durationMs > 0 ? "1" : "";
+  dataset.hasSubs = normalizeTracks(state.subtitleTracks).length > 0 ? "1" : "";
+  dataset.multiAudio = normalizeTracks(state.audioTracks).length > 1 ? "1" : "";
   root.classList.toggle("info-open", activeModal === "streamInfo");
   root.classList.toggle("source-visible", Boolean(!showError && !isPlaying && !state.isLoading && (state.streamTitle || state.providerName)));
   syncHiddenCursor();
@@ -2809,6 +2892,7 @@ const renderChrome = () => {
   setVisible(submitIntroButton, Boolean(state.showSubmitIntro));
   setVisible(videoSettingsButton, Boolean(state.showVideoSettings));
   setVisible(sourcesButton, Boolean(state.showSources));
+  sourcesButton.querySelector("use")?.setAttribute("href", state.sourcesAreChannels ? "#icon-tv" : "#icon-source");
   setVisible(episodesButton, Boolean(state.showEpisodes));
   const hasChapters = Array.isArray(state.chapters) && state.chapters.length > 0;
   setVisible(chaptersButton, hasChapters);
@@ -3222,6 +3306,10 @@ document.querySelectorAll("[data-command]").forEach(button => {
     }
     if (command === "sources") {
       sourceFilterId = "";
+      sourceCenterPending = true;
+      sourceList.style.visibility = "hidden";
+      window.clearTimeout(sourceCenterTimer);
+      sourceCenterTimer = window.setTimeout(endSourceCenter, 400);
       openPlayerModal("sources");
       send("sources", 0);
       return;
@@ -3604,6 +3692,11 @@ window.playerUpdate = update => {
   const subtitleTracks = normalizeTracks(update.subtitleTracks);
   const audioTracksChanged = trackListSignature(audioTracks) !== trackListSignature(state.audioTracks);
   const subtitleTracksChanged = trackListSignature(subtitleTracks) !== trackListSignature(state.subtitleTracks);
+  const resolution = typeof update.resolution === "string" ? update.resolution : "";
+  if (resolutionLabel && resolutionLabel.textContent !== resolution) {
+    resolutionLabel.textContent = resolution;
+    resolutionLabel.hidden = !resolution;
+  }
   const nativeIsPlaying = !Boolean(update.paused);
   lastNativeIsPlaying = nativeIsPlaying;
   if (pendingIsPlaying !== null && nativeIsPlaying === pendingIsPlaying) {
