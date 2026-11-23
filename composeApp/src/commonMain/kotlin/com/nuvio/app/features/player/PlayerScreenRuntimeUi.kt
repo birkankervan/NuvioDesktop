@@ -19,6 +19,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import co.touchlab.kermit.Logger
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 import com.nuvio.app.core.format.formatReleaseDateForDisplay
 import com.nuvio.app.core.i18n.localizedByteUnit
 import com.nuvio.app.core.ui.AppPresenceState
@@ -67,6 +69,7 @@ import com.nuvio.app.features.iptv.isIptvMetaId
 import org.jetbrains.compose.resources.stringResource
 
 private val playerControlsLog = Logger.withTag("PlayerControls")
+private var liveEofReloadMark: TimeSource.Monotonic.ValueTimeMark? = null
 
 @Composable
 internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
@@ -660,7 +663,16 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
                     if (!updatePlaybackSnapshot(snapshot)) return@PlatformPlayerSurface
                     refreshAudioTracksIfChanged()
                     if (!snapshot.isLoading) initialLoadCompleted = true
-                    if (snapshot.isEnded) {
+                    if (snapshot.isEnded && isIptvMetaId(activeVideoId) && IptvPlayerChannels.isLive) {
+                        // Live streams never "end": reconnect by reloading the same source (max once / 5s).
+                        val last = liveEofReloadMark
+                        if (last == null || last.elapsedNow() >= 5.seconds) {
+                            liveEofReloadMark = TimeSource.Monotonic.markNow()
+                            playerControlsLog.d { "live eof -> reload" }
+                            shouldPlay = true
+                            playerController?.retry()
+                        }
+                    } else if (snapshot.isEnded) {
                         shouldPlay = false
                         controlsVisible = !playerControlsLocked
                     }
