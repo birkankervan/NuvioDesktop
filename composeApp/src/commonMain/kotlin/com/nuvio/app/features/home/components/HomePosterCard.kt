@@ -51,6 +51,7 @@ fun HomePosterCard(
             bottomLeftLogoUrl = if (isLandscapeMode && showLandscapeOverlay && effectiveLandscapePoster.isNullOrBlank()) item.logo else null,
             bottomLeftText = if (isLandscapeMode && showLandscapeOverlay && effectiveLandscapePoster.isNullOrBlank() && item.logo.isNullOrBlank() && !posterCardStyle.hideLabelsEnabled) item.name else null,
             isWatched = isWatched,
+            ratingText = item.imdbRating?.toDoubleOrNull()?.takeIf { it > 0 }?.let { ((it * 10).toInt() / 10.0).toString() },
             onClick = onClick,
             onLongClick = onLongClick,
         )

@@ -254,6 +254,7 @@ fun NuvioPosterCard(
     bottomLeftLogoUrl: String? = null,
     bottomLeftText: String? = null,
     isWatched: Boolean = false,
+    ratingText: String? = null,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -372,6 +373,20 @@ fun NuvioPosterCard(
                 }
             }
 
+            if (!ratingText.isNullOrBlank()) {
+                // Watched badge owns TopEnd; move the rating aside instead of stacking.
+                Text(
+                    text = "★ $ratingText",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(0xFFF5C518),
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(if (isWatched) Alignment.TopStart else Alignment.TopEnd)
+                        .padding(NuvioTokens.Space.s6)
+                        .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
             NuvioPosterWatchedOverlay(isWatched = isWatched)
         }
         if (shouldShowTitleBelow) {
