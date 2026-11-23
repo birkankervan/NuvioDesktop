@@ -62,6 +62,8 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
+import com.nuvio.app.features.iptv.IptvPlayerChannels
+import com.nuvio.app.features.iptv.isIptvMetaId
 import org.jetbrains.compose.resources.stringResource
 
 private val playerControlsLog = Logger.withTag("PlayerControls")
@@ -333,7 +335,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         holdToSpeedValue = playerSettingsUiState.holdToSpeedValue,
         subtitlesLabel = stringResource(Res.string.compose_player_subs),
         audioLabel = stringResource(Res.string.compose_player_audio),
-        sourcesLabel = stringResource(Res.string.compose_player_sources),
+        sourcesLabel = stringResource(if (isIptvMetaId(activeVideoId)) Res.string.compose_player_channels else Res.string.compose_player_sources),
         episodesLabel = stringResource(Res.string.compose_player_episodes),
         externalPlayerLabel = stringResource(Res.string.streams_open_external_player),
         playLabel = stringResource(Res.string.detail_btn_play),
@@ -353,7 +355,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         playbackErrorTitle = stringResource(Res.string.compose_player_playback_error),
         playbackErrorMessage = errorMessage.orEmpty(),
         playbackErrorActionLabel = stringResource(Res.string.compose_player_go_back),
-        sourcesPanelTitle = stringResource(Res.string.compose_player_panel_sources),
+        sourcesPanelTitle = stringResource(if (isIptvMetaId(activeVideoId)) Res.string.compose_player_channels else Res.string.compose_player_panel_sources),
         episodesPanelTitle = stringResource(Res.string.compose_player_panel_episodes),
         streamsPanelTitle = stringResource(Res.string.compose_player_panel_streams),
         allFilterLabel = allFilterLabel,
@@ -455,7 +457,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
             playerSettingsUiState.introDbApiKey.isNotBlank() &&
             !activeSubmitIntroImdbId().isNullOrBlank(),
         showVideoSettings = isIos,
-        showSources = activeVideoId != null,
+        showSources = activeVideoId != null && (!isIptvMetaId(activeVideoId) || IptvPlayerChannels.channels.isNotEmpty()),
+        sourcesAreChannels = isIptvMetaId(activeVideoId) && IptvPlayerChannels.channels.isNotEmpty(),
         showEpisodes = isSeries,
         showExternalPlayer = args.onOpenInExternalPlayer != null,
         durationMs = playbackSnapshot.durationMs,
@@ -1087,7 +1090,11 @@ internal fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: 
             val streams = sourceStreamsState.groups.flatMap { it.streams }
             val stream = streams.getOrNull(value.toInt()) ?: return true
             if (requestP2pConsentForPlayerControls(stream = stream, episode = null)) return true
-            switchToSource(stream)
+            if (isIptvMetaId(activeVideoId)) {
+                switchToSource(stream, saveForReuse = false)
+                activeInitialPositionMs = 0L
+                IptvPlayerChannels.onSwitched(stream.url)
+            } else switchToSource(stream)
             playerControlsCloseModalsToken += 1
         }
         "selectEpisode" -> {

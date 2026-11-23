@@ -58,6 +58,8 @@ import nuvio.composeapp.generated.resources.parental_severity_moderate
 import nuvio.composeapp.generated.resources.parental_severity_severe
 import nuvio.composeapp.generated.resources.parental_violence
 import nuvio.composeapp.generated.resources.compose_player_tba
+import com.nuvio.app.features.iptv.IptvPlayerChannels
+import com.nuvio.app.features.iptv.isIptvMetaId
 import org.jetbrains.compose.resources.stringResource
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -196,7 +198,7 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
         runtime.metaScreenSettingsUiState = metaScreenSettingsUiState
         runtime.watchedUiState = watchedUiState
         runtime.watchProgressUiState = watchProgressUiState
-        runtime.sourceStreamsState = sourceStreamsState
+        runtime.sourceStreamsState = if (isIptvMetaId(runtime.activeVideoId)) remember(IptvPlayerChannels.channels) { IptvPlayerChannels.asStreamsState() } else sourceStreamsState
         runtime.episodeStreamsRepoState = episodeStreamsRepoState
         runtime.metaUiState = metaUiState
         runtime.addonsUiState = addonsUiState

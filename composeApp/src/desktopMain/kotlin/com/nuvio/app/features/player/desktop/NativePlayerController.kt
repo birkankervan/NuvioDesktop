@@ -1715,6 +1715,8 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean, onImageRea
         append(',')
         appendJsonField("showSources", showSources)
         append(',')
+        appendJsonField("sourcesAreChannels", sourcesAreChannels)
+        append(',')
         appendJsonField("showEpisodes", showEpisodes)
         append(',')
         appendJsonField("showExternalPlayer", showExternalPlayer)

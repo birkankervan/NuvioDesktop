@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -81,6 +83,8 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
     val focus = remember { FocusRequester() }
     var opening by remember { mutableStateOf(false) }
     var searchFocused by remember { mutableStateOf(false) }
+    // If this composable outlives the trip to the player, allow opening again once the preview is released.
+    LaunchedEffect(st.previewSuspended) { if (!st.previewSuspended) opening = false }
 
     // Back from the full player: give the server ~0.8s to release the old connection, then the preview may restart.
     LaunchedEffect(Unit) {
@@ -147,6 +151,7 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
     fun open(title: String, url: String, live: Boolean = false) {
         if (opening) return
         opening = true
+        IptvPlayerChannels.channels = if (live) rows.mapNotNull { (it as? IptvRow.Channel)?.item } else emptyList()
         // Live preview playing this url: the full player adopts the running core instead of reconnecting.
         if (live && st.previewGate.handOff?.invoke(url) == true) { st.previewGate.handedOff = true; st.previewSuspended = true; onPlay(title, url); return }
         // Full player; any preview must be fully released first (max_connections=1). Series has no preview mounted.
@@ -252,6 +257,7 @@ internal fun IptvBrowser(account: IptvAccount, onPlay: (String, String) -> Unit)
                             when (row) {
                                 is IptvRow.Header -> SectionHeader(row.label)
                                 is IptvRow.Channel -> ChannelRow(row.item, row.item.id == selected?.id,
+                                    progress = if (mode == IptvMode.VOD) progress[iptvKeyFor(row.item.url)] else null,
                                     onSelect = { st.episodePane = false; selectRow(row.item) },
                                     onOpen = { if (!series) play(row.item) })
                             }
@@ -309,7 +315,7 @@ private fun SectionHeader(label: String) {
 }
 
 @Composable
-private fun ChannelRow(item: IptvItem, selected: Boolean, onSelect: () -> Unit, onOpen: () -> Unit) {
+private fun ChannelRow(item: IptvItem, selected: Boolean, onSelect: () -> Unit, onOpen: () -> Unit, progress: IptvProgressEntry? = null) {
     val hover = remember { MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
     val select by rememberUpdatedState(onSelect)
@@ -327,7 +333,14 @@ private fun ChannelRow(item: IptvItem, selected: Boolean, onSelect: () -> Unit, 
         Text(item.num?.toString().orEmpty(), Modifier.width(32.dp), maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.labelSmall)
         NuvioAsyncImage(item.icon, item.name, Modifier.size(48.dp), contentScale = ContentScale.Fit)
-        Text(item.name, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+            if (progress != null && !progress.watched && progress.durationMs > 0L && progress.positionMs > 0L) {
+                LinearProgressIndicator(progress = { (progress.positionMs.toFloat() / progress.durationMs).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(2.dp))
+            }
+        }
+        if (progress?.watched == true) Text("\u2713", color = MaterialTheme.colorScheme.primary)
     }
 }

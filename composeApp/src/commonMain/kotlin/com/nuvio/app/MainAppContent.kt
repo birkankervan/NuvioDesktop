@@ -2,6 +2,7 @@ package com.nuvio.app
 
 import com.nuvio.app.features.iptv.IPTV_META_PREFIX
 import com.nuvio.app.features.iptv.IptvPlaybackProgress
+import com.nuvio.app.features.iptv.IptvPlayerChannels
 import com.nuvio.app.features.iptv.iptvKeyFor
 import com.nuvio.app.features.iptv.iptvResumePositionMs
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -1558,7 +1559,7 @@ internal fun MainAppContent(
                                             videoId = iptvId,
                                             parentMetaId = iptvId,
                                             parentMetaType = "tv",
-                                            initialPositionMs = iptvResumePositionMs(IptvPlaybackProgress.progress.value[iptvId]) ?: 0L,
+                                            initialPositionMs = if (IptvPlayerChannels.isLive) 0L else iptvResumePositionMs(IptvPlaybackProgress.progress.value[iptvId]) ?: 0L,
                                         ),
                                     )
                                     navController.navigate(PlayerRoute(launchId = launchId, title = title))

@@ -19,17 +19,19 @@ internal object NativePlayerHandoff {
         Thread(r, "nuvio-player-handoff").apply { isDaemon = true }
     }
 
-    @Synchronized
+    // dispose() hops to the main thread: decide under the monitor, dispose after leaving it.
     fun offer(url: String, handle: Long) {
-        pending?.let { discard(it) }
-        pending = Pending(url, handle, scheduler.schedule({ expire(handle) }, timeoutMs, TimeUnit.MILLISECONDS))
+        val old = synchronized(this) {
+            val prev = pending
+            pending = Pending(url, handle, scheduler.schedule({ expire(handle) }, timeoutMs, TimeUnit.MILLISECONDS))
+            prev
+        }
+        old?.let { discard(it) }
     }
 
     /** Returns the handle offered for exactly [url]; a pending handle for another url is disposed (one connection only). */
-    @Synchronized
     fun take(url: String): Long? {
-        val p = pending ?: return null
-        pending = null
+        val p = synchronized(this) { pending.also { pending = null } } ?: return null
         p.expiry.cancel(false)
         if (p.url == url) return p.handle
         runCatching { dispose(p.handle) }

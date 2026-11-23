@@ -44,22 +44,25 @@ internal object IptvPlaybackProgress {
     private val _progress = MutableStateFlow(load())
     val progress: StateFlow<Map<String, IptvProgressEntry>> = _progress
 
+    // Ticks update [latest] only; the StateFlow (collected by the browser) is published on save/flush/watched.
+    private var latest = _progress.value
     private var lastSave = TimeSource.Monotonic.markNow()
     private var dirty = false
 
     fun report(key: String, positionMs: Long, durationMs: Long, ended: Boolean) {
-        val next = updateIptvProgress(_progress.value, key, positionMs, durationMs, ended)
-        if (next === _progress.value) return
-        _progress.value = next
+        val next = updateIptvProgress(latest, key, positionMs, durationMs, ended)
+        if (next === latest) return
+        latest = next
         dirty = true
         if (next[key]?.watched == true || lastSave.elapsedNow() >= 10.seconds) flush()
     }
 
     fun flush() {
+        if (latest !== _progress.value) _progress.value = latest
         if (!dirty) return
         dirty = false
         lastSave = TimeSource.Monotonic.markNow()
-        runCatching { IptvStorage.saveProgress(Json.encodeToString(_progress.value)) }
+        runCatching { IptvStorage.saveProgress(Json.encodeToString(latest)) }
     }
 
     private fun load(): Map<String, IptvProgressEntry> =

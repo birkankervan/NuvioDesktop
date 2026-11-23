@@ -6,6 +6,7 @@ import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.ui.LocalFold
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.iptv.IptvPlaybackProgress
+import com.nuvio.app.features.iptv.IptvPlayerChannels
 import com.nuvio.app.features.iptv.isIptvMetaId
 import com.nuvio.app.features.party.PartyRepository
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -568,7 +569,7 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
             isLoading = playbackSnapshot.isLoading,
             isEnded = playbackSnapshot.isEnded,
         )
-        if (isIptvMetaId(parentMetaId)) IptvPlaybackProgress.report(parentMetaId, playbackSnapshot.positionMs, playbackSnapshot.durationMs, playbackSnapshot.isEnded)
+        if (isIptvMetaId(parentMetaId) && !IptvPlayerChannels.isLive) IptvPlaybackProgress.report(parentMetaId, playbackSnapshot.positionMs, playbackSnapshot.durationMs, playbackSnapshot.isEnded)
         if (playbackSnapshot.isEnded) {
             flushWatchProgress(TrackingScrobbleAction.STOP)
             previousIsPlaying = false

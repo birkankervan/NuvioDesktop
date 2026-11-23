@@ -2236,8 +2236,8 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     NSString *controlsJson = [_pendingControlsJson copy];
     NSString *jsonString = javaScriptStringLiteral(controlsJson);
     NSString *script = [NSString stringWithFormat:
-        @"(function(){if(!window.playerControls)return 'missing';window.playerControls(JSON.parse(%@));return 'applied';})()",
-        jsonString];
+        @"(function(){if(!window.playerControls)return 'missing';document.documentElement.classList.toggle('preview',%@);window.playerControls(JSON.parse(%@));return 'applied';})()",
+        _previewMode ? @"true" : @"false", jsonString]; // preview class is authoritative from native state, idempotent each push
     [_webView evaluateJavaScript:script completionHandler:^(id _Nullable jsResult, NSError * _Nullable error) {
         if (error) {
             return;

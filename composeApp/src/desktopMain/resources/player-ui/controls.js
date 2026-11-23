@@ -1100,6 +1100,7 @@ const setModalVisibility = (modal, visible, animated = true) => {
 const closePlayerModal = (notifyDismiss = false, animated = true) => {
   const closingModal = activeModal;
   activeModal = "";
+  endSourceCenter();
   if (fontPickerOpen) setFontPickerOpen(false);
   modalElements.forEach(modal => {
     setModalVisibility(modal, false, animated);
@@ -1955,7 +1956,7 @@ const renderSourceVirtualRows = () => {
   window.requestAnimationFrame(() => {
     let changed = false;
     rendered.forEach(({ index, wrapper }) => {
-      const measured = Math.ceil(wrapper.getBoundingClientRect().height);
+      const measured = wrapper.offsetHeight; // not getBoundingClientRect: the panel's open transform scales it
       if (measured > 0 && Math.abs((sourceVirtualHeights[index] || SourceRowEstimatedHeight) - measured) > 1) {
         sourceVirtualHeights[index] = measured;
         changed = true;
@@ -1971,6 +1972,17 @@ const renderSourceVirtualRows = () => {
 const requestSourceVirtualRender = () => {
   if (sourceVirtualRenderRaf) return;
   sourceVirtualRenderRaf = window.requestAnimationFrame(renderSourceVirtualRows);
+};
+
+// Set when the Sources/Channels button opens the panel: the list stays hidden until the playing row is centered
+// (first render that contains it), with a safety reveal so it never stays hidden.
+let sourceCenterPending = false;
+let sourceCenterTimer = 0;
+const endSourceCenter = () => {
+  sourceCenterPending = false;
+  window.clearTimeout(sourceCenterTimer);
+  sourceList.style.visibility = "";
+  sourceList.style.scrollBehavior = "";
 };
 
 const renderSourceModal = (modalOpened = false) => {
@@ -2026,6 +2038,39 @@ const renderSourceModal = (modalOpened = false) => {
   sourceVirtualSpacer.className = "source-virtual-spacer";
   sourceList.appendChild(sourceVirtualSpacer);
   rebuildSourceVirtualLayout();
+  if (sourceCenterPending) {
+    // Open already centered: list stays hidden while rows near the current one are rendered and measured
+    // (offsetHeight, untouched by the panel's open transform), unmeasured rows take their average, then scroll.
+    const i = sourceVirtualItems.findIndex(item => item.isCurrent);
+    if (i >= 0) {
+      const center = () => {
+        const h = sourceVirtualHeights[i] || SourceRowEstimatedHeight;
+        sourceList.style.scrollBehavior = "auto";
+        sourceList.scrollTop = Math.max(0, sourceVirtualOffsets[i] - sourceList.clientHeight / 2 + h / 2);
+      };
+      const settle = () => {
+        center();
+        renderSourceVirtualRows();
+        const measuredIdx = new Set();
+        let sum = 0;
+        sourceVirtualSpacer.querySelectorAll(".source-virtual-row").forEach(wrapper => {
+          const m = /translateY\((-?[\d.]+)px\)/.exec(wrapper.style.transform);
+          const idx = m ? sourceVirtualOffsets.indexOf(Number(m[1])) : -1;
+          if (idx >= 0 && wrapper.offsetHeight > 0) { sourceVirtualHeights[idx] = wrapper.offsetHeight; measuredIdx.add(idx); sum += wrapper.offsetHeight; }
+        });
+        if (measuredIdx.size) {
+          const avg = Math.round(sum / measuredIdx.size);
+          sourceVirtualHeights = sourceVirtualHeights.map((h, idx) => measuredIdx.has(idx) ? h : avg);
+          rebuildSourceVirtualLayout();
+        }
+        center();
+        renderSourceVirtualRows();
+        endSourceCenter();
+      };
+      if (sourceList.clientHeight > 0) settle();
+      else window.requestAnimationFrame(settle);
+    }
+  }
   requestSourceVirtualRender();
 };
 
@@ -2846,6 +2891,7 @@ const renderChrome = () => {
   setVisible(submitIntroButton, Boolean(state.showSubmitIntro));
   setVisible(videoSettingsButton, Boolean(state.showVideoSettings));
   setVisible(sourcesButton, Boolean(state.showSources));
+  sourcesButton.querySelector("use")?.setAttribute("href", state.sourcesAreChannels ? "#icon-tv" : "#icon-source");
   setVisible(episodesButton, Boolean(state.showEpisodes));
   const hasChapters = Array.isArray(state.chapters) && state.chapters.length > 0;
   setVisible(chaptersButton, hasChapters);
@@ -3259,6 +3305,10 @@ document.querySelectorAll("[data-command]").forEach(button => {
     }
     if (command === "sources") {
       sourceFilterId = "";
+      sourceCenterPending = true;
+      sourceList.style.visibility = "hidden";
+      window.clearTimeout(sourceCenterTimer);
+      sourceCenterTimer = window.setTimeout(endSourceCenter, 400);
       openPlayerModal("sources");
       send("sources", 0);
       return;
