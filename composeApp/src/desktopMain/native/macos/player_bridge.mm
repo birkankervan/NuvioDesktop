@@ -1123,6 +1123,21 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     mpv_set_option_string(mpv, name, value);
 }
 
+// Live-cushion tuning applied at runtime when a core moves between preview and full player.
+static void setLiveTuning(mpv_handle *mpv, BOOL full) {
+    const char *kv[][2] = {
+        {"hls-bitrate", full ? "max" : "min"},
+        {"demuxer-lavf-o", full ? "live_start_index=-3" : "live_start_index=-1"},
+        {"cache-pause-initial", full ? "yes" : "no"},
+        {"cache-pause-wait", full ? "4" : "1"},
+        {"demuxer-readahead-secs", full ? "10" : "2"}, // must exceed cache-pause-wait or resume never fires
+    };
+    for (auto &p : kv) {
+        int rc = mpv_set_property_string(mpv, p[0], p[1]);
+        if (rc < 0) NSLog(@"[mpv] set %s failed: %s", p[0], mpv_error_string(rc));
+    }
+}
+
 @implementation MpvWebPlayer {
     NSView *_hostView;
     PlayerMetalView *_videoView;
@@ -1432,6 +1447,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
         _previewMode = NO;
         ((PlayerControlsWebView *)_webView).preview = NO;
         _previewLoadAt.store(0.0);
+        setLiveTuning(_mpv, YES);
         NuvioPreviewContainerView *container = _previewContainer;
         [self reparentSurfaceToHostView:newHostView]; // frame observers, z-order, layout reset, focus (now allowed)
         container.player = nil;
@@ -1484,6 +1500,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(hostViewBoundsDidChange:)
                                                      name:NSViewBoundsDidChangeNotification object:_hostView];
         _previewMode = YES;
+        setLiveTuning(_mpv, NO);
         ((PlayerControlsWebView *)_webView).preview = YES;
         _didFocusControlsWebView = NO;
         _lastAppliedNativeLayoutBounds = NSZeroRect;
@@ -1934,6 +1951,8 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
         setMpvOptionString(_mpv, "cache", "yes");
         setMpvOptionString(_mpv, "demuxer-readahead-secs", "2");
         setMpvOptionString(_mpv, "cache-pause-initial", "no");
+    } else {
+        setMpvOptionString(_mpv, "cache-pause-wait", "4");
     }
     setMpvOptionString(
         _mpv,
