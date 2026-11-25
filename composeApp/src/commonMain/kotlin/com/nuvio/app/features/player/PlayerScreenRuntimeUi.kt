@@ -2054,6 +2054,7 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
         },
         onAudioModalDismissed = { showAudioModal = false },
         showAudioDelay = playerController?.supportsAudioDelay == true,
+        supportsAssStyleCustomization = playerController?.supportsAssStyleCustomization == true,
         audioDelayMs = audioDelayMs,
         onAudioDelayChanged = { delayMs -> setAudioDelay(delayMs) },
         showAudioAmplification = playerController?.supportsAudioAmplification == true,
@@ -2074,7 +2075,7 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
         addonSubtitles = visibleAddonSubtitles,
         selectedAddonSubtitleId = selectedAddonSubtitleId,
         isLoadingAddonSubtitles = isLoadingAddonSubtitles,
-        subtitleStyle = subtitleStyle,
+        subtitleStyle = activeSubtitleStyle,
         subtitleDelayMs = subtitleDelayMs,
         selectedAddonSubtitle = selectedAddonSubtitle,
         subtitleAutoSyncState = subtitleAutoSyncState,
@@ -2108,7 +2109,13 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
             if (hasBurnedInServerSubtitle) clearServerSubtitleTrack()
         },
         onFetchAddonSubtitles = { fetchAddonSubtitlesForActiveItem() },
-        onSubtitleStyleChanged = PlayerSettingsRepository::setSubtitleStyle,
+        onSubtitleStyleChanged = { style ->
+            if (isAssSubtitleStyleActive) {
+                PlayerSettingsRepository.setAssSubtitleStyle(style)
+            } else {
+                PlayerSettingsRepository.setSubtitleStyle(style)
+            }
+        },
         onSubtitleDelayChanged = { delayMs -> setSubtitleDelay(delayMs) },
         onSubtitleDelayReset = { setSubtitleDelay(0) },
         onAutoSyncCapture = { captureSubtitleAutoSyncTime() },
